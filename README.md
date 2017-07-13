@@ -7,6 +7,8 @@
   - [Generating Certs and a Token](#sec-1-3)
   - [License](#sec-1-4)
 
+[<https://travis-ci.org/threatgrid/ring-jwt-middleware.png?branch=master>](https://travis-ci.org/threatgrid/ring-jwt-middleware)
+
 # ring-jwt-middleware<a id="sec-1"></a>
 
 A simple middleware to authenticate users using JWT (JSON Web Tokens) currently, only RS256 is supported.
@@ -14,7 +16,7 @@ A simple middleware to authenticate users using JWT (JSON Web Tokens) currently,
 ## Features<a id="sec-1-1"></a>
 
 -   RS256 signing
--   uses JWT claims
+-   uses IANA "JSON Web Token Claims"
 -   JWT lifetime & Expiration support
 -   custom additional validation through a user provided fn
 -   custom revokation check through a user provided fn
