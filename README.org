@@ -1,0 +1,104 @@
+[[https://travis-ci.org/threatgrid/ring-jwt-middleware][https://travis-ci.org/threatgrid/ring-jwt-middleware.png?branch=master]]
+
+* ring-jwt-middleware
+
+A simple middleware to authenticate users using JWT (JSON Web Tokens)
+currently, only RS256 is supported.
+
+** Features
+
+- RS256 signing
+- uses IANA "JSON Web Token Claims" 
+- JWT lifetime & Expiration support
+- custom additional validation through a user provided fn
+- custom revokation check through a user provided fn
+
+** Usage 
+
+*** Middleware & options
+
+Use =wrap-jwt-auth-fn= to create an instance of the middleware,
+wrap your routes with it:
+
+#+BEGIN_SRC clojure
+(api (api-data url-prefix)
+        (middleware [(wrap-jwt-auth-fn {:pubkey-path jwt-cert-path
+                                        :is-revoked-fn revoked?
+                                        :jwt-max-lifetime-in-sec jwt-lifetime
+                                        :jwt-check-fn check-jwt-fields})]
+                    (routes service url-prefix)))
+#+END_SRC
+
+| Option                     | Description                                                               | Default |
+|----------------------------+---------------------------------------------------------------------------+---------|
+| =:pubkey-path=             | the path to your public key                                               | nil     |
+| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                     | 86400   |
+| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool       | nil     |
+| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil | nil     |
+
+If the request contains a valid JWT auth header,
+the JWT is merged with the ring request under a =:jwt= key, 
+there is also an =:user-identifier-key= for easy access,
+else the request is terminated with =unauthorized= HTTP response.
+
+*** JWT Format
+
+Currently this middleware only supportes JWTs using claims registered in the IANA "JSON Web Token Claims",
+which means you need to generate JWTs using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
+namely =jti, exp, iat, nbf sub=
+
+| Claim  | Description                                                        | Format |
+|--------+--------------------------------------------------------------------+--------|
+| =:exp= | Expiration time: https://tools.ietf.org/html/rfc7519#section-4.1.4 | Long   |
+| =:iat= | Issued At: https://tools.ietf.org/html/rfc7519#section-4.1.6       | Long   |
+| =:jti= | JWT ID: https://tools.ietf.org/html/rfc7519#section-4.1.7          | String |
+| =:nbf= | Not Before: https://tools.ietf.org/html/rfc7519#section-4.1.5      | Long   |
+| =:sub= | Subject: https://tools.ietf.org/html/rfc7519#section-4.1.2         | String |
+                                                  
+
+here is a sample token:
+
+#+BEGIN_SRC clojure
+{:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26cd2a"
+ :exp 1499419023
+ :iat 1498814223
+ :nbf 1498813923
+ :sub "foo@bar.com"
+
+ :user-identifier "foo@bar.com"
+ :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
+#+END_SRC
+
+*** Compojure-api support
+
+You can check the JWT from the req with schemas
+and destructure it like the rest of the HTTP query,
+use =:jwt-params=.
+
+#+BEGIN_SRC clojure
+(POST "/test" []
+      :return {:foo s/Str
+               :user_id s/Str}
+               :body-params  [{lorem :- s/Str ""}]
+               :summary "Does nothing"
+               :jwt-params [foo :- s/Str
+                            user_id :- s/Str
+                            exp :- s/Num
+                            {boolean_field :- s/Bool "false"}]                            
+  {:status 200
+   :body {:foo foo
+          :user_id user_id}})
+#+END_SRC
+
+** Generating Certs and a Token 
+
+A simple script is available to generate certs for signing the tokens:
+=> ./resources/cert/gen_cert.sh=
+some dummy ones are already available for easy testing.
+
+- use =ring-jwt-middleware.core-test/make-jwt= to generate a sample token from a map
+
+** License
+
+Copyright © 2015-2016 Cisco Systems
+Eclipse Public License v1.0
