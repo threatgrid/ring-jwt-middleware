@@ -117,23 +117,28 @@
     (let [wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/ring-jwt-middleware.pub"})
           ring-fn-1 (wrapper (fn [req] {:status 200
-                                       :body (:identity req)}))
+                                        :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
-                                       :body(:jwt req)}))
+                                        :body(:jwt req)}))
           req-1 {:headers {"authorization"
                            (str "Bearer " jwt-token-1)}}
-          req-2 {:headers {"authorization"
-                           (str "Bearer x" jwt-token-1)}}]
+          req-bad-jwt {:headers {"authorization"
+                                 (str "Bearer x" jwt-token-1)}}
+          req-no-header {}
+          req-auth-header-not-jwt {:headers {"authorization"
+                                             "api-key 1234-1234-1234-1234"}}]
       (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
         (let [response-1 (ring-fn-1 req-1)
-              response-2 (ring-fn-2 req-1)]
+              response-2 (ring-fn-2 req-1)
+              response-no-header (ring-fn-1 req-no-header)
+              response-auth-header-not-jwt (ring-fn-1 req-auth-header-not-jwt)]
           (:status (ring-fn-1 req-1))
           (is (= 200 (:status response-1)))
           (is (= "foo@bar.com" (:body response-1)))
-
           (is (= decoded-jwt-1 (:body response-2)))
-          (is (= 401
-                 (:status (ring-fn-1 req-2))))))
+          (is (= 401 (:status (ring-fn-1 req-bad-jwt))))
+          (is (= 401 (:status response-no-header)))
+          (is (= 401 (:status response-auth-header-not-jwt)))))
       (testing "The JWT should be expired after 24h"
         (is (= 401
                (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 4))]
@@ -141,6 +146,59 @@
         (is (= 200
                (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 3))]
                  (:status (ring-fn-1 req-1))))))))
+  (testing "Authorized No Auth Header strategy test"
+    (let [wrapper (sut/wrap-jwt-auth-fn
+                   {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                    :no-jwt-handler sut/authorize-no-jwt-header-strategy})
+          ring-fn-1 (wrapper (fn [req] {:status 200
+                                        :body (:identity req)}))
+          ring-fn-2 (wrapper (fn [req] {:status 200
+                                        :body(:jwt req)}))
+          req-1 {:headers {"authorization"
+                           (str "Bearer " jwt-token-1)}}
+          req-bad-jwt {:headers {"authorization"
+                                 (str "Bearer x" jwt-token-1)}}
+          req-no-header {}]
+      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
+        (let [response-1 (ring-fn-1 req-1)
+              response-2 (ring-fn-2 req-1)
+              response-no-header (ring-fn-1 req-no-header)]
+          (:status (ring-fn-1 req-1))
+          (is (= 200 (:status response-1)))
+          (is (= "foo@bar.com" (:body response-1)))
+          (is (= decoded-jwt-1 (:body response-2)))
+          (is (= 401 (:status (ring-fn-1 req-bad-jwt))))
+          (is (= 200 (:status response-no-header)))
+          (is (= nil (:body   response-no-header)))))
+      (testing "The JWT should be expired after 24h"
+        (is (= 401
+               (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 4))]
+                 (:status (ring-fn-1 req-1)))))
+        (is (= 200
+               (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 3))]
+                 (:status (ring-fn-1 req-1))))))))
+  (testing "Manual No Auth Header strategy test"
+    (let [wrap-dummy-id (fn [handler]
+                          (fn [request]
+                            (-> request
+                                (assoc :identity "dummy")
+                                handler)))
+          wrapper (sut/wrap-jwt-auth-fn
+                   {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                    :no-jwt-handler wrap-dummy-id})
+          ring-fn (wrapper (fn [req] {:status 200
+                                      :body (:identity req)}))
+          req-no-header {}
+          req-auth-header-not-jwt {:headers {"authorization"
+                                             "api-key 1234-1234-1234-1234"}}]
+      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
+        (let [response-no-header (ring-fn req-no-header)
+              response-auth-header-not-jwt (ring-fn req-auth-header-not-jwt)]
+          (is (= 200 (:status response-no-header)))
+          (is (= "dummy" (:body   response-no-header)))
+
+          (is (= 200 (:status response-auth-header-not-jwt)))
+          (is (= "dummy" (:body response-auth-header-not-jwt)))))))
   (testing "revocation test"
     (let [always-revoke (fn [_] true)
           wrapper-always-revoke (sut/wrap-jwt-auth-fn
@@ -152,11 +210,11 @@
                                  :is-revoked-fn never-revoke})
           ring-fn-1 (wrapper-always-revoke
                      (fn [req] {:status 200
-                               :body (:identity req)}))
+                                :body (:identity req)}))
 
           ring-fn-2 (wrapper-never-revoke
                      (fn [req] {:status 200
-                               :body (:identity req)}))
+                                :body (:identity req)}))
           req {:headers {"authorization"
                          (str "Bearer " jwt-token-1)}}]
       (is (= 401 (:status (ring-fn-1 req))))

@@ -8,12 +8,12 @@ currently, only RS256 is supported.
 ** Features
 
 - RS256 signing
-- uses IANA "JSON Web Token Claims" 
+- uses IANA "JSON Web Token Claims"
 - JWT lifetime & Expiration support
 - custom additional validation through a user provided fn
 - custom revokation check through a user provided fn
 
-** Usage 
+** Usage
 
 *** Middleware & options
 
@@ -21,31 +21,38 @@ Use =wrap-jwt-auth-fn= to create an instance of the middleware,
 wrap your routes with it:
 
 #+BEGIN_SRC clojure
-(api (api-data url-prefix)
-        (middleware [(wrap-jwt-auth-fn {:pubkey-path jwt-cert-path
-                                        :is-revoked-fn revoked?
-                                        :jwt-max-lifetime-in-sec jwt-lifetime
-                                        :jwt-check-fn check-jwt-fields})]
-                    (routes service url-prefix)))
+(let [wrap-jwt
+      (wrap-jwt-auth-fn {:pubkey-path jwt-cert-path
+                         :is-revoked-fn revoked?
+                         :jwt-max-lifetime-in-sec jwt-lifetime
+                         :jwt-check-fn check-jwt-fields
+                         :no-jwt-handler authorize-no-jwt-header-strategy})]
+  (api (api-data url-prefix)
+        (middleware [wrap-jwt]
+          (routes service url-prefix))))
 #+END_SRC
 
-| Option                     | Description                                                               | Default |
-|----------------------------+---------------------------------------------------------------------------+---------|
-| =:pubkey-path=             | the path to your public key                                               | nil     |
-| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                     | 86400   |
-| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool       | nil     |
-| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil | nil     |
+| Option                     | Description                                                                            | Default                       |
+|----------------------------+----------------------------------------------------------------------------------------+-------------------------------|
+| =:pubkey-path=             | the path to your public key                                                            | nil                           |
+| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                  | 86400                         |
+| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                    | nil                           |
+| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                           |
+| =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy |
 
-If the request contains a valid JWT auth header,
-the JWT is merged with the ring request under a =:jwt= key, 
-there is also an =:user-identifier-key= for easy access,
-else the request is terminated with =unauthorized= HTTP response.
+If the request contains a valid JWT auth header, the JWT is merged with the ring
+request under a =:jwt= key, there is also an =:user-identifier-key= for easy
+access, else the request is passed to =:no-jwt-handler=. By default if no JWT
+auth header is found the request is terminated with =unauthorized= HTTP
+response. You can use =authorize-no-jwt-header-strategy= for the
+=:no-jwt-handler= key if you want to manage how to deal with that case in you
+own handler. You could also provide your own middleware function for this case.
 
 *** JWT Format
 
 Currently this middleware only supportes JWTs using claims registered in the IANA "JSON Web Token Claims",
 which means you need to generate JWTs using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
-namely =jti, exp, iat, nbf sub=
+namely =jti=, =exp=, =iat=, =nbf=,=sub=:
 
 | Claim  | Description                                                        | Format |
 |--------+--------------------------------------------------------------------+--------|
@@ -54,7 +61,6 @@ namely =jti, exp, iat, nbf sub=
 | =:jti= | JWT ID: https://tools.ietf.org/html/rfc7519#section-4.1.7          | String |
 | =:nbf= | Not Before: https://tools.ietf.org/html/rfc7519#section-4.1.5      | Long   |
 | =:sub= | Subject: https://tools.ietf.org/html/rfc7519#section-4.1.2         | String |
-                                                  
 
 here is a sample token:
 
@@ -84,13 +90,13 @@ use =:jwt-params=.
                :jwt-params [foo :- s/Str
                             user_id :- s/Str
                             exp :- s/Num
-                            {boolean_field :- s/Bool "false"}]                            
+                            {boolean_field :- s/Bool "false"}]
   {:status 200
    :body {:foo foo
           :user_id user_id}})
 #+END_SRC
 
-** Generating Certs and a Token 
+** Generating Certs and a Token
 
 A simple script is available to generate certs for signing the tokens:
 => ./resources/cert/gen_cert.sh=
@@ -100,5 +106,5 @@ some dummy ones are already available for easy testing.
 
 ** License
 
-Copyright © 2015-2016 Cisco Systems
+Copyright © 2015-2017 Cisco Systems
 Eclipse Public License v1.0

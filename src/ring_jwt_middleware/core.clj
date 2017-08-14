@@ -107,9 +107,7 @@
 
 (def default-jwt-lifetime-in-sec 86400)
 
-(defn no-revocation-strategy
-  [_]
-  false)
+(def no-revocation-strategy (constantly false))
 
 (defn validate-jwt
   "Run both expiration and user checks,
@@ -128,37 +126,48 @@
   ([jwt jwt-max-lifetime-in-sec]
    (validate-jwt jwt jwt-max-lifetime-in-sec nil)))
 
+(defn forbid-no-jwt-header-strategy
+  "Forbid all request with no Auth header"
+  [handler]
+  (constantly (unauthorized "No Authorization Header")))
+
+(def authorize-no-jwt-header-strategy
+  "Authorize all request even with no Auth header."
+  identity)
+
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
   [{:keys [pubkey-path
            jwt-max-lifetime-in-sec
            is-revoked-fn
-           jwt-check-fn]
+           jwt-check-fn
+           no-jwt-handler]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
-         is-revoked-fn no-revocation-strategy}}]
-
+         is-revoked-fn no-revocation-strategy
+         no-jwt-handler forbid-no-jwt-header-strategy}}]
   (let [pubkey (public-key pubkey-path)]
     (fn [handler]
-      (fn [request]
-        (if-let [raw-jwt (get-jwt request)]
-          (if-let [jwt (decode raw-jwt pubkey)]
-            (if-let [validation-errors
-                     (validate-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)]
-              (log-and-refuse (pr-str jwt)
-                              (format "(%s) %s"
-                                      (:user-identifier jwt "Unkown User ID")
-                                      (str/join ", " validation-errors)))
-              (if (is-revoked-fn jwt)
-                (log-and-refuse
-                 (pr-str jwt)
-                 (format "JWT revoked for %s"
-                         (:user-identifier jwt "Unkown User ID")))
-                (handler (assoc request
-                                :identity (:user-identifier jwt)
-                                :jwt jwt))))
-            (log-and-refuse (str "Bearer:" (pr-str raw-jwt))
-                            "Invalid Authorization Header (couldn't decode the JWT)"))
-          (unauthorized "No Authorization Header"))))))
+      (let [no-jwt-fn (no-jwt-handler handler)]
+        (fn [request]
+          (if-let [raw-jwt (get-jwt request)]
+            (if-let [jwt (decode raw-jwt pubkey)]
+              (if-let [validation-errors
+                       (validate-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)]
+                (log-and-refuse (pr-str jwt)
+                                (format "(%s) %s"
+                                        (:user-identifier jwt "Unkown User ID")
+                                        (str/join ", " validation-errors)))
+                (if (is-revoked-fn jwt)
+                  (log-and-refuse
+                   (pr-str jwt)
+                   (format "JWT revoked for %s"
+                           (:user-identifier jwt "Unkown User ID")))
+                  (handler (assoc request
+                                  :identity (:user-identifier jwt)
+                                  :jwt jwt))))
+              (log-and-refuse (str "Bearer:" (pr-str raw-jwt))
+                              "Invalid Authorization Header (couldn't decode the JWT)"))
+            (no-jwt-fn request)))))))
 
 ;; compojure-api restructuring
 ;; add the :jwt-params in the route description
