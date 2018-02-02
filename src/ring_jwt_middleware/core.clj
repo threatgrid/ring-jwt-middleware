@@ -155,7 +155,7 @@
                        (validate-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)]
                 (log-and-refuse (pr-str jwt)
                                 (format "(%s) %s"
-                                        (:user-identifier jwt "Unkown User ID")
+                                        (:sub jwt "Unkown User ID")
                                         (str/join ", " validation-errors)))
                 (if (is-revoked-fn jwt)
                   (log-and-refuse
@@ -163,7 +163,7 @@
                    (format "JWT revoked for %s"
                            (:user-identifier jwt "Unkown User ID")))
                   (handler (assoc request
-                                  :identity (:user-identifier jwt)
+                                  :identity (:sub jwt)
                                   :jwt jwt))))
               (log-and-refuse (str "Bearer:" (pr-str raw-jwt))
                               "Invalid Authorization Header (couldn't decode the JWT)"))
