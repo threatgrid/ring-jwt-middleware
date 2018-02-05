@@ -140,15 +140,47 @@
   "Authorize all request even with no Auth header."
   identity)
 
+(defn jwt->user
+  "can be used as post-jwt-format-fn"
+  [jwt]
+  (:sub jwt))
+
+(defn jwt->oauth-ids
+  "can be used as post-jwt-format-fn
+
+  This is an example function that given a JWT whose claims looks like:
+
+  - :sub
+  - \"<url>/scopes\"
+  - \"<url>/org/id\"
+  - \"<url>/oauth/client/id\"
+
+  It is a generic format about what an access-token should provide:
+
+  - user-id, client-id, scopes
+  - org-id
+  "
+  [prefix jwt]
+  {:user   {:id (:sub jwt)}
+   :scopes (set (get jwt (str prefix "scopes")))
+   :org    (let [org-name (get jwt (str prefix "org/name"))]
+             (cond-> {:id (get jwt (str prefix "org/id"))}
+               org-name (assoc :name org-name)))
+   :client (let [client-name (get jwt (str prefix "oauth/client/name"))]
+             (cond-> {:id (get jwt (str prefix "oauth/client/id"))}
+               client-name (assoc :name client-name)))})
+
+
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
   [{:keys [pubkey-path
-           jwt-max-lifetime-in-sec
            is-revoked-fn
            jwt-check-fn
+           post-jwt-format-fn
            no-jwt-handler]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
+         post-jwt-format-fn jwt->user
          no-jwt-handler forbid-no-jwt-header-strategy}}]
   (let [pubkey (public-key pubkey-path)
         is-revoked-fn (if (fn? is-revoked-fn)
@@ -174,9 +206,9 @@
                   (log-and-refuse
                    (pr-str jwt)
                    (format "JWT revoked for %s"
-                           (:user-identifier jwt "Unkown User ID")))
+                           (:sub jwt "Unkown User ID")))
                   (handler (assoc request
-                                  :identity (:sub jwt)
+                                  :identity-infos (post-jwt-format-fn jwt)
                                   :jwt jwt))))
               (log-and-refuse (str "Bearer:" (pr-str raw-jwt))
                               "Invalid Authorization Header (couldn't decode the JWT)"))
