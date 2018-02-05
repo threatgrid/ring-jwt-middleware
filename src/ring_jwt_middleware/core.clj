@@ -118,7 +118,12 @@
    (let [exp-vals [(check-jwt-expiry jwt (or jwt-max-lifetime-in-sec
                                              default-jwt-lifetime-in-sec))]
          checks (if (fn? jwt-check-fn)
-                  (or (jwt-check-fn jwt) [])
+                  (or (try (jwt-check-fn jwt)
+                           (catch Exception e
+                             (log/errorf "jwt-check-fn thrown an exception on: %s"
+                                         (pr-str jwt))
+                             (throw e)))
+                      [])
                   [])]
      (seq (remove nil?
                   (concat checks exp-vals)))))
@@ -145,7 +150,11 @@
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
          no-jwt-handler forbid-no-jwt-header-strategy}}]
-  (let [pubkey (public-key pubkey-path)]
+  (let [pubkey (public-key pubkey-path)
+        is-revoked-fn (if (fn? is-revoked-fn)
+                        is-revoked-fn
+                        (do (log/warn "is-revoked-fn is not a function! no-revocation-strategy is used.")
+                            no-revocation-strategy))]
     (fn [handler]
       (let [no-jwt-fn (no-jwt-handler handler)]
         (fn [request]
@@ -157,7 +166,11 @@
                                 (format "(%s) %s"
                                         (:sub jwt "Unkown User ID")
                                         (str/join ", " validation-errors)))
-                (if (is-revoked-fn jwt)
+                (if (try (is-revoked-fn jwt)
+                         (catch Exception e
+                           (log/errorf "is-revoked-fn thrown an exception for: %s"
+                                       (pr-str jwt))
+                           (throw e)))
                   (log-and-refuse
                    (pr-str jwt)
                    (format "JWT revoked for %s"
