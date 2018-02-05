@@ -351,6 +351,17 @@
                                    {:foo "bar"
                                     :bar "baz"})))
 
+  (is (nil? (sut/check-jwt-filter! #{{:scopes ["admin"]}}
+                                   {:foo "bar"
+                                    :scopes ["admin" "user"]})))
+
+  (is (try (sut/check-jwt-filter! #{{:scopes ["admin"]}}
+                                  {:foo "bar"
+                                   :scopes ["user"]})
+           false
+           (catch Exception e
+             true)))
+
   (is (try (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
                                   {:foo "quux"})
            false
