@@ -1,7 +1,7 @@
 (ns ring-jwt-middleware.core-test
   (:require [clj-jwt.key :refer [public-key]]
             [clj-momo.lib.clj-time.core :as time]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [clojure.test :refer [deftest are is testing use-fixtures]]
             [compojure.api
              [api :refer [api]]
              [sweet :refer [context POST]]]
@@ -117,7 +117,7 @@
     (let [wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/ring-jwt-middleware.pub"})
           ring-fn-1 (wrapper (fn [req] {:status 200
-                                        :body (:identity req)}))
+                                        :body (:id-infos req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
                                         :body(:jwt req)}))
           req-1 {:headers {"authorization"
@@ -151,7 +151,7 @@
                    {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
                     :no-jwt-handler sut/authorize-no-jwt-header-strategy})
           ring-fn-1 (wrapper (fn [req] {:status 200
-                                        :body (:identity req)}))
+                                        :body (:id-infos req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
                                         :body(:jwt req)}))
           req-1 {:headers {"authorization"
@@ -181,13 +181,13 @@
     (let [wrap-dummy-id (fn [handler]
                           (fn [request]
                             (-> request
-                                (assoc :identity "dummy")
+                                (assoc :id-infos "dummy")
                                 handler)))
           wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
                     :no-jwt-handler wrap-dummy-id})
           ring-fn (wrapper (fn [req] {:status 200
-                                      :body (:identity req)}))
+                                      :body (:id-infos req)}))
           req-no-header {}
           req-auth-header-not-jwt {:headers {"authorization"
                                              "api-key 1234-1234-1234-1234"}}]
@@ -210,60 +210,135 @@
                                  :is-revoked-fn never-revoke})
           ring-fn-1 (wrapper-always-revoke
                      (fn [req] {:status 200
-                                :body (:identity req)}))
+                                :body (:id-infos req)}))
 
           ring-fn-2 (wrapper-never-revoke
                      (fn [req] {:status 200
-                                :body (:identity req)}))
+                                :body (:id-infos req)}))
           req {:headers {"authorization"
                          (str "Bearer " jwt-token-1)}}]
       (is (= 401 (:status (ring-fn-1 req))))
       (is (= 200 (:status (ring-fn-2 req))))
       (is (= "foo@bar.com"
-             (:body (ring-fn-2 req)))))))
+             (:body (ring-fn-2 req))))))
+  (testing "post jwt transformation test"
+    (let [post-transform (fn [m] {:user {:id (:sub m)}
+                                  :org {:id (:foo m)}})
+          wrapper-tr (sut/wrap-jwt-auth-fn
+                      {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                       :post-jwt-format-fn post-transform})
+          ring-fn-1 (wrapper-tr
+                     (fn [req] {:status 200
+                                :body (:id-infos req)}))
+          req {:headers {"authorization"
+                         (str "Bearer " jwt-token-1)}}]
+      (is (= 200 (:status (ring-fn-1 req))))
+      (is (= {:user {:id "foo@bar.com"}
+              :org {:id "bar"}}
+             (:body (ring-fn-1 req)))))))
 
 (deftest compojure-api-restructuring-test
-  (let [api-1
-        (api {}
-             (context "/test" []
-                      (POST "/test" []
-                            :return {:foo s/Str
-                                     :user_id s/Str}
-                            :body-params  [{lorem :- s/Str ""}]
-                            :summary "Does nothing"
-                            :jwt-params [foo :- s/Str
-                                         user_id :- s/Str
-                                         exp :- s/Num
-                                         {boolean_field
-                                          :- s/Bool "false"}]
-                            {:status 200
-                             :body {:foo foo
-                                    :user_id user_id}})))]
+  (testing "jwt-params"
+    (let [api-1
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:foo s/Str
+                                       :user_id s/Str}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :jwt-params [foo :- s/Str
+                                           user_id :- s/Str
+                                           exp :- s/Num
+                                           {boolean_field
+                                            :- s/Bool "false"}]
+                              {:status 200
+                               :body {:foo foo
+                                      :user_id user_id}})))]
 
-    (is (= {:foo "bar",
-            :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
-           (read-string
-            (slurp (:body (api-1 {:request-method :post
-                                  :uri "/test/test"
-                                  :headers {"accept" "application/edn"
-                                            "content-type" "application/edn"}
-                                  :body-params {:lorem "ipsum"}
-                                  :jwt-params {}
-                                  :jwt decoded-jwt-1}))))))
+      (is (= {:foo "bar",
+              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :jwt-params {}
+                                    :jwt decoded-jwt-1}))))))
 
-    (is (= {:errors
-            {:boolean_field
-             "(not (instance? java.lang.Boolean \"not a boolean\"))"}}
-           (read-string
-            (slurp (:body (api-1 {:request-method :post
-                                  :uri "/test/test"
-                                  :headers {"accept" "application/edn"
-                                            "content-type" "application/edn"}
-                                  :body-params {:lorem "ipsum"}
-                                  :jwt-params {}
-                                  :jwt (assoc decoded-jwt-1
-                                              "boolean_field"
-                                              "not a boolean")}))))))))
+      (is (= {:errors
+              {:boolean_field
+               "(not (instance? java.lang.Boolean \"not a boolean\"))"}}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :jwt-params {}
+                                    :jwt (assoc decoded-jwt-1
+                                                "boolean_field"
+                                                "not a boolean")}))))))))
+  (testing "id-infos"
+    (let [api-1
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :id-infos [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))]
+
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all"]}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :id-infos {:user {:id "user-id"}
+                                               :org {:id "org-id"}
+                                               :scopes ["all"]}})))))))))
+
+(deftest map-match-test
+  (is (sut/map-match {:a :b}       {:a :b}))
+
+  (is (sut/map-match
+       {:a #{:a :b}} {:a #{:a :b}}))
+
+  (is (sut/map-match
+       {:a #{:a :b}} {:a #{:a :b :c}}))
+
+  (is (sut/map-match
+       {:foo 1 :bar #{2 3}}
+       {:foo 1 :bar #{1 2 3 4}}))
+
+  (is (not (sut/map-match {:a :b} {:a :c})))
+  (is (not (sut/map-match {:a #{:a :b :c}} {:a #{:a :b}}))))
+
+
+(deftest sub-hash-test
+  (is (sut/sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3}))
+  (is (sut/sub-hash?
+       {:foo 1 :bar #{2 3}}
+       {:foo 1 :bar #{1 2 3 4} :baz 3}))
+
+  (is (not (sut/sub-hash?
+            {:foo 1 :bar 2}
+            {:foo 1})))
+
+  (is (not (sut/sub-hash?
+            {:foo 1 :bar 2}
+            {:foo 1 :bar 3}))))
 
 (deftest check-jwt-filter-test
   (is (nil? (sut/check-jwt-filter! nil {:foo "quux"}))

@@ -176,6 +176,7 @@
   [{:keys [pubkey-path
            is-revoked-fn
            jwt-check-fn
+           jwt-max-lifetime-in-sec
            post-jwt-format-fn
            no-jwt-handler]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
@@ -208,7 +209,7 @@
                    (format "JWT revoked for %s"
                            (:sub jwt "Unkown User ID")))
                   (handler (assoc request
-                                  :identity-infos (post-jwt-format-fn jwt)
+                                  :id-infos (post-jwt-format-fn jwt)
                                   :jwt jwt))))
               (log-and-refuse (str "Bearer:" (pr-str raw-jwt))
                               "Invalid Authorization Header (couldn't decode the JWT)"))
@@ -221,12 +222,42 @@
         new-letks [jwt-params (meta/src-coerce! schema :jwt :string)]]
     (update-in acc [:letks] into new-letks)))
 
-;; add the :jwt-filter in the route description
+
+(defn map-match
+  "
+  ;; true
+  (map-match {:a :b} {:a :b})
+  (map-match {:a #{:a :b}} {:a #{:a :b}})
+  (map-match {:a #{:a :b}} {:a #{:a :b :c}})
+
+  ;; false
+  (map-match {:a #{:a :b :c}} {:a #{:b :c}})
+  "
+  [m1 m2]
+  (every? true?
+          (for [[k v1] m1]
+            (let [v2 (get m2 k)]
+              (if (and (coll? v1) (coll? v2))
+                (set/subset? (set v1) (set v2))
+                (= v1 v2))))))
+
+(comment
+  (map-match {:a :b} {:a :b})
+  (map-match {:a #{:a :b}} {:a #{:a :b}})
+  (map-match {:a #{:a :b}} {:a #{:a :b :c}})
+  ;; false
+  (map-match {:a #{:a :b :c}} {:a #{:b :c}})
+  )
+
+
+
 (defn sub-hash?
   "Return true if the 1st hashmap is a sub hashmap of the second.
 
     ~~~clojure
     > (sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3})
+    true
+    > (sub-hash? {:foo 1 :bar #{2 3}} {:foo 1 :bar #{1 2 3 4} :baz 3})
     true
     > (sub-hash? {:foo 1 :bar 2} {:foo 1})
     false
@@ -235,8 +266,8 @@
     ~~~
   "
   [hashmap-to-match h]
-  (= (select-keys h (keys hashmap-to-match))
-     hashmap-to-match))
+  (map-match hashmap-to-match
+             (select-keys h (keys hashmap-to-match))))
 
 (defn check-jwt-filter! [required jwt]
   (when (and (some? required)
@@ -264,3 +295,38 @@
              [:lets]
              into
              ['_ `(check-jwt-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
+
+
+
+;; add the :id-infos in the route description
+(defmethod meta/restructure-param :id-infos [_ id-infos acc]
+  (let [schema  (meta/fnk-schema id-infos)
+        new-letks [id-infos (meta/src-coerce! schema :id-infos :string)]]
+    (update-in acc [:letks] into new-letks)))
+
+(defn check-id-infos-filter! [required id-infos]
+  (when (and (some? required)
+             (every? #(not (sub-hash? % id-infos)) required))
+    (log/errorf "Unauthorized access attempt: %s"
+                (pr-str
+                 {:text ":id-infos-filter params mismatch"
+                  :required required
+                  :identity id-infos}))
+    (ring.util.http-response/unauthorized!
+     {:msg "You don't have the required credentials to access this route"})))
+
+;;
+;; add the :id-infos-filter
+;; to compojure api params
+;; it should contains a set of hash-maps
+;; example:
+;;
+;; (POST "/foo" [] :id-infos-filter #{{:foo "bar"} {:foo "baz"}})
+;;
+;; Will be accepted only for people having a jwt such that the value
+;; for :foo is either "bar" or "baz"
+(defmethod compojure.api.meta/restructure-param :id-infos-filter [_ authorized acc]
+  (update-in acc
+             [:lets]
+             into
+             ['_ `(check-id-infos-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
