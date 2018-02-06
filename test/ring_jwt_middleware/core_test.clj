@@ -117,7 +117,7 @@
     (let [wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/ring-jwt-middleware.pub"})
           ring-fn-1 (wrapper (fn [req] {:status 200
-                                        :body (:id-infos req)}))
+                                        :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
                                         :body(:jwt req)}))
           req-1 {:headers {"authorization"
@@ -151,7 +151,7 @@
                    {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
                     :no-jwt-handler sut/authorize-no-jwt-header-strategy})
           ring-fn-1 (wrapper (fn [req] {:status 200
-                                        :body (:id-infos req)}))
+                                        :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
                                         :body(:jwt req)}))
           req-1 {:headers {"authorization"
@@ -181,13 +181,13 @@
     (let [wrap-dummy-id (fn [handler]
                           (fn [request]
                             (-> request
-                                (assoc :id-infos "dummy")
+                                (assoc :identity "dummy")
                                 handler)))
           wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
                     :no-jwt-handler wrap-dummy-id})
           ring-fn (wrapper (fn [req] {:status 200
-                                      :body (:id-infos req)}))
+                                      :body (:identity req)}))
           req-no-header {}
           req-auth-header-not-jwt {:headers {"authorization"
                                              "api-key 1234-1234-1234-1234"}}]
@@ -210,11 +210,11 @@
                                  :is-revoked-fn never-revoke})
           ring-fn-1 (wrapper-always-revoke
                      (fn [req] {:status 200
-                                :body (:id-infos req)}))
+                                :body (:identity req)}))
 
           ring-fn-2 (wrapper-never-revoke
                      (fn [req] {:status 200
-                                :body (:id-infos req)}))
+                                :body (:identity req)}))
           req {:headers {"authorization"
                          (str "Bearer " jwt-token-1)}}]
       (is (= 401 (:status (ring-fn-1 req))))
@@ -229,7 +229,7 @@
                        :post-jwt-format-fn post-transform})
           ring-fn-1 (wrapper-tr
                      (fn [req] {:status 200
-                                :body (:id-infos req)}))
+                                :body (:identity req)}))
           req {:headers {"authorization"
                          (str "Bearer " jwt-token-1)}}]
       (is (= 200 (:status (ring-fn-1 req))))
@@ -280,7 +280,7 @@
                                     :jwt (assoc decoded-jwt-1
                                                 "boolean_field"
                                                 "not a boolean")}))))))))
-  (testing "id-infos"
+  (testing "identity"
     (let [api-1
           (api {}
                (context "/test" []
@@ -290,7 +290,7 @@
                                        :scopes [s/Str]}
                               :body-params  [{lorem :- s/Str ""}]
                               :summary "Does nothing"
-                              :id-infos [user :- {:id s/Str}
+                              :identity [user :- {:id s/Str}
                                          org :- {:id s/Str}
                                          scopes :-  [s/Str]]
                               {:status 200
@@ -305,40 +305,41 @@
                                     :headers {"accept" "application/edn"
                                               "content-type" "application/edn"}
                                     :body-params {:lorem "ipsum"}
-                                    :id-infos {:user {:id "user-id"}
+                                    :identity {:user {:id "user-id"}
                                                :org {:id "org-id"}
                                                :scopes ["all"]}})))))))))
 
-(deftest map-match-test
-  (is (sut/map-match {:a :b}       {:a :b}))
-
-  (is (sut/map-match
-       {:a #{:a :b}} {:a #{:a :b}}))
-
-  (is (sut/map-match
-       {:a #{:a :b}} {:a #{:a :b :c}}))
-
-  (is (sut/map-match
-       {:foo 1 :bar #{2 3}}
-       {:foo 1 :bar #{1 2 3 4}}))
-
-  (is (not (sut/map-match {:a :b} {:a :c})))
-  (is (not (sut/map-match {:a #{:a :b :c}} {:a #{:a :b}}))))
-
-
 (deftest sub-hash-test
-  (is (sut/sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3}))
-  (is (sut/sub-hash?
-       {:foo 1 :bar #{2 3}}
-       {:foo 1 :bar #{1 2 3 4} :baz 3}))
+  (testing "positive sub-hash?"
+    (is (sut/sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3}))
+    (is (sut/sub-hash?
+         {:foo 1 :bar #{2 3}}
+         {:foo 1 :bar #{1 2 3 4} :baz 3}))
 
-  (is (not (sut/sub-hash?
-            {:foo 1 :bar 2}
-            {:foo 1})))
+    (is (sut/sub-hash? {:a :b}
+                       {:a :b}))
 
-  (is (not (sut/sub-hash?
-            {:foo 1 :bar 2}
-            {:foo 1 :bar 3}))))
+    (is (sut/sub-hash? {:a #{:a :b}}
+                       {:a #{:a :b}}))
+
+    (is (sut/sub-hash? {:a #{:a :b}}
+                       {:a #{:a :b :c}}))
+
+    (is (sut/sub-hash? {:foo 1 :bar #{2 3}}
+                       {:foo 1 :bar #{1 2 3 4}})))
+
+  (testing "negative sub-hash?"
+    (is (not (sut/sub-hash? {:a :b}
+                            {:a :c})))
+    (is (not (sut/sub-hash? {:a #{:a :b :c}}
+                            {:a #{:a :b}})))
+    (is (not (sut/sub-hash?
+              {:foo 1 :bar 2}
+              {:foo 1})))
+
+    (is (not (sut/sub-hash?
+              {:foo 1 :bar 2}
+              {:foo 1 :bar 3})))))
 
 (deftest check-jwt-filter-test
   (is (nil? (sut/check-jwt-filter! nil {:foo "quux"}))
@@ -371,6 +372,41 @@
   (is (try (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
                                   {:foo "quux"
                                    :baz "bar"})
+           false
+           (catch Exception e
+             true))))
+
+(deftest check-identity-filter-test
+  (is (nil? (sut/check-identity-filter! nil {:foo "quux"}))
+      "JWT should alway pass when there is no filter")
+
+  (is (nil? (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                        {:foo "bar"})))
+
+  (is (nil? (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                        {:foo "bar"
+                                         :bar "baz"})))
+
+  (is (nil? (sut/check-identity-filter! #{{:scopes ["admin"]}}
+                                        {:foo "bar"
+                                         :scopes ["admin" "user"]})))
+
+  (is (try (sut/check-identity-filter! #{{:scopes ["admin"]}}
+                                       {:foo "bar"
+                                        :scopes ["user"]})
+           false
+           (catch Exception e
+             true)))
+
+  (is (try (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                       {:foo "quux"})
+           false
+           (catch Exception e
+             true)))
+
+  (is (try (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                       {:foo "quux"
+                                        :baz "bar"})
            false
            (catch Exception e
              true))))
