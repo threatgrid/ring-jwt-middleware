@@ -40,6 +40,7 @@ wrap your routes with it:
 | =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                            |
 | =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy  |
 | =:post-jwt-format-fn=      | a fn that given a JWT generate an identity information                                 | jwt->user-id (the "sub" claim) |
+| =:long-lived-jwt?=         | a fn that given a JWT return true if we should check the max-lifetime false otherwise  | jwt->user-id (the "sub" claim) |
 
 If the request contains a valid JWT auth header, the JWT is merged with the ring
 request under a =:jwt= key as well with a =:identiy= key.

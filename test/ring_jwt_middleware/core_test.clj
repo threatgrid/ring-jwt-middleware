@@ -102,7 +102,17 @@
   (with-redefs
     [time/now (constantly (time/date-time 2019 04 03 8 24 5 123))]
     (is (= '("This JWT has expired since 2 years 45 days 18h 9min 55s")
-           (sut/validate-jwt decoded-jwt-2 86400)))))
+           (sut/validate-jwt decoded-jwt-2 86400))))
+
+  (with-redefs
+    [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
+    (is (= '("This JWT has expired since 1s")
+           (sut/validate-jwt decoded-jwt-2 86400 nil (constantly false)))))
+
+  (with-redefs
+    [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
+    (is (nil?
+         (sut/validate-jwt decoded-jwt-2 86400 nil (constantly true))))))
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
@@ -235,7 +245,34 @@
       (is (= 200 (:status (ring-fn-1 req))))
       (is (= {:user {:id "foo@bar.com"}
               :org {:id "bar"}}
-             (:body (ring-fn-1 req)))))))
+             (:body (ring-fn-1 req))))))
+  (testing "post jwt transformation test"
+    (let [post-transform (fn [m] {:user {:id (:sub m)}
+                                  :org {:id (:foo m)}})
+          wrapper-check (sut/wrap-jwt-auth-fn
+                         {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                          :long-lived-jwt? (constantly false)})
+          wrapper-no-check (sut/wrap-jwt-auth-fn
+                            {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                             :long-lived-jwt? (constantly true)})
+          ring-fn-1 (wrapper-check
+                     (fn [req] {:status 200
+                                :body (:identity req)}))
+          ring-fn-2 (wrapper-no-check
+                     (fn [req] {:status 200
+                                :body (:identity req)}))
+          req {:headers {"authorization"
+                         (str "Bearer " jwt-token-1)}}]
+      (is (= 401
+             (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 4))]
+               (:status (ring-fn-1 req)))))
+      ;; should expire only using :exp not runtime max-jwt-lifetime-in-sec
+      (is (= 200
+             (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 4))]
+               (:status (ring-fn-2 req)))))
+      (is (= 401
+             (with-redefs [time/now (constantly (time/date-time 2018 07 1 9 17 4))]
+               (:status (ring-fn-2 req))))))))
 
 (deftest compojure-api-restructuring-test
   (testing "jwt-params"
