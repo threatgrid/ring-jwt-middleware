@@ -32,21 +32,29 @@ wrap your routes with it:
           (routes service url-prefix))))
 #+END_SRC
 
-| Option                     | Description                                                                            | Default                       |
-|----------------------------+----------------------------------------------------------------------------------------+-------------------------------|
-| =:pubkey-path=             | the path to your public key                                                            | nil                           |
-| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                  | 86400                         |
-| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                    | nil                           |
-| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                           |
-| =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy |
+| Option                     | Description                                                                            | Default                        |
+|----------------------------+----------------------------------------------------------------------------------------+--------------------------------|
+| =:pubkey-path=             | the path to your public key                                                            | nil                            |
+| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                  | 86400                          |
+| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                    | nil                            |
+| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                            |
+| =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy  |
+| =:post-jwt-format-fn=      | a fn that given a JWT generate an identity information                                 | jwt->user-id (the "sub" claim) |
 
 If the request contains a valid JWT auth header, the JWT is merged with the ring
-request under a =:jwt= key, there is also an =:user-identifier-key= for easy
-access, else the request is passed to =:no-jwt-handler=. By default if no JWT
-auth header is found the request is terminated with =unauthorized= HTTP
-response. You can use =authorize-no-jwt-header-strategy= for the
-=:no-jwt-handler= key if you want to manage how to deal with that case in you
-own handler. You could also provide your own middleware function for this case.
+request under a =:jwt= key as well with a =:identiy= key.
+Otherwise the request is passed to =:no-jwt-handler=.
+
+By default if no JWT auth header is found the request is terminated with
+=unauthorized= HTTP response. You can use =authorize-no-jwt-header-strategy= for
+the =:no-jwt-handler= key if you want to manage how to deal with that case in
+you own handler. You could also provide your own middleware function for this
+case.
+
+By default the ~:identity~ contains the ~"sub"~ field of the JWT. But you can
+use more complex transformation. For example, there is a `jwt->oauth-ids`
+function in the code that could be used to handle JWT generated from an OAuth2
+provider.
 
 *** JWT Format
 
@@ -69,10 +77,10 @@ here is a sample token:
  :exp 1499419023
  :iat 1498814223
  :nbf 1498813923
- :sub "foo@bar.com"
+ :sub "f0010924-e1bc-4b03-b600-89c6cf52757c"
 
- :user-identifier "foo@bar.com"
- :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
+ :email "foo@bar.com"
+ "http://example.com/claim/user/name" "john doe"}
 #+END_SRC
 
 *** Compojure-api support
@@ -96,6 +104,9 @@ use =:jwt-params=.
           :user_id user_id}})
 #+END_SRC
 
+You could also directly use =:identity= to match the result of the
+=post-jwt-format-fn= applied to the decoded JWT.
+
 ** Generating Certs and a Token
 
 A simple script is available to generate certs for signing the tokens:
@@ -106,5 +117,5 @@ some dummy ones are already available for easy testing.
 
 ** License
 
-Copyright © 2015-2017 Cisco Systems
+Copyright © 2015-2018 Cisco Systems
 Eclipse Public License v1.0
