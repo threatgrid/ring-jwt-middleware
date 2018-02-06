@@ -1,7 +1,8 @@
 (ns ring-jwt-middleware.core
   (:require [clj-jwt
              [core :refer :all]
-             [key :refer [public-key]]]
+             [key :refer [public-key]]
+             [json-key-fn :as jkf]]
             [clj-momo.lib.clj-time
              [coerce :as time-coerce]
              [core :as time]]
@@ -140,15 +141,48 @@
   "Authorize all request even with no Auth header."
   identity)
 
+(defn jwt->user-id
+  "can be used as post-jwt-format-fn"
+  [jwt]
+  (:sub jwt))
+
+(defn jwt->oauth-ids
+  "can be used as post-jwt-format-fn
+
+  This is an example function that given a JWT whose claims looks like:
+
+  - :sub
+  - \"<prefix>/scopes\"
+  - \"<prefix>/org/id\"
+  - \"<prefix>/oauth/client/id\"
+
+  It is a generic format about what an access-token should provide:
+
+  - user-id, client-id, scopes
+  - org-id
+  "
+  [prefix jwt]
+  {:user   {:id (jwt->user-id jwt)}
+   :scopes (set (get jwt (str prefix "/scopes")))
+   :org    (let [org-name (get jwt (str prefix "/org/name"))]
+             (cond-> {:id (get jwt (str prefix "/org/id"))}
+               org-name (assoc :name org-name)))
+   :client (let [client-name (get jwt (str prefix "/oauth/client/name"))]
+             (cond-> {:id (get jwt (str prefix "/oauth/client/id"))}
+               client-name (assoc :name client-name)))})
+
+
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
   [{:keys [pubkey-path
-           jwt-max-lifetime-in-sec
            is-revoked-fn
            jwt-check-fn
+           jwt-max-lifetime-in-sec
+           post-jwt-format-fn
            no-jwt-handler]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
+         post-jwt-format-fn jwt->user-id
          no-jwt-handler forbid-no-jwt-header-strategy}}]
   (let [pubkey (public-key pubkey-path)
         is-revoked-fn (if (fn? is-revoked-fn)
@@ -164,7 +198,7 @@
                        (validate-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)]
                 (log-and-refuse (pr-str jwt)
                                 (format "(%s) %s"
-                                        (:sub jwt "Unkown User ID")
+                                        (or (jwt->user-id jwt) "Unkown User ID")
                                         (str/join ", " validation-errors)))
                 (if (try (is-revoked-fn jwt)
                          (catch Exception e
@@ -174,9 +208,9 @@
                   (log-and-refuse
                    (pr-str jwt)
                    (format "JWT revoked for %s"
-                           (:user-identifier jwt "Unkown User ID")))
+                           (or (jwt->user-id jwt) "Unkown User ID")))
                   (handler (assoc request
-                                  :identity (:sub jwt)
+                                  :identity (post-jwt-format-fn jwt)
                                   :jwt jwt))))
               (log-and-refuse (str "Bearer:" (pr-str raw-jwt))
                               "Invalid Authorization Header (couldn't decode the JWT)"))
@@ -189,12 +223,17 @@
         new-letks [jwt-params (meta/src-coerce! schema :jwt :string)]]
     (update-in acc [:letks] into new-letks)))
 
-;; add the :jwt-filter in the route description
 (defn sub-hash?
   "Return true if the 1st hashmap is a sub hashmap of the second.
 
+  Take into account that if some value is a collection then
+  only check if the corresponding value in the first hashmap
+  is a sub-collection.
+
     ~~~clojure
     > (sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3})
+    true
+    > (sub-hash? {:foo 1 :bar #{2 3}} {:foo 1 :bar #{1 2 3 4} :baz 3})
     true
     > (sub-hash? {:foo 1 :bar 2} {:foo 1})
     false
@@ -202,9 +241,14 @@
     false
     ~~~
   "
-  [hashmap-to-match h]
-  (= (select-keys h (keys hashmap-to-match))
-     hashmap-to-match))
+  [m1 m2]
+  (->> m1
+       (map (fn [[k v1]]
+              (let [v2 (get m2 k)]
+                (if (and (coll? v1) (coll? v2))
+                  (set/subset? (set v1) (set v2))
+                  (= v1 v2)))))
+       (every? true?)))
 
 (defn check-jwt-filter! [required jwt]
   (when (and (some? required)
@@ -232,3 +276,38 @@
              [:lets]
              into
              ['_ `(check-jwt-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
+
+
+
+;; add the :identity in the route description
+(defmethod meta/restructure-param :identity [_ identity acc]
+  (let [schema  (meta/fnk-schema identity)
+        new-letks [identity (meta/src-coerce! schema :identity :string)]]
+    (update-in acc [:letks] into new-letks)))
+
+(defn check-identity-filter! [required identity]
+  (when (and (some? required)
+             (every? #(not (sub-hash? % identity)) required))
+    (log/errorf "Unauthorized access attempt: %s"
+                (pr-str
+                 {:text ":identity-filter params mismatch"
+                  :required required
+                  :identity identity}))
+    (ring.util.http-response/unauthorized!
+     {:msg "You don't have the required credentials to access this route"})))
+
+;;
+;; add the :identity-filter
+;; to compojure api params
+;; it should contains a set of hash-maps
+;; example:
+;;
+;; (POST "/foo" [] :identity-filter #{{:foo "bar"} {:foo "baz"}})
+;;
+;; Will be accepted only for people having a jwt such that the value
+;; for :foo is either "bar" or "baz"
+(defmethod compojure.api.meta/restructure-param :identity-filter [_ authorized acc]
+  (update-in acc
+             [:lets]
+             into
+             ['_ `(check-identity-filter! ~authorized (:jwt ~'+compojure-api-request+))]))

@@ -1,7 +1,7 @@
 (ns ring-jwt-middleware.core-test
   (:require [clj-jwt.key :refer [public-key]]
             [clj-momo.lib.clj-time.core :as time]
-            [clojure.test :refer [deftest is testing use-fixtures]]
+            [clojure.test :refer [deftest are is testing use-fixtures]]
             [compojure.api
              [api :refer [api]]
              [sweet :refer [context POST]]]
@@ -220,50 +220,126 @@
       (is (= 401 (:status (ring-fn-1 req))))
       (is (= 200 (:status (ring-fn-2 req))))
       (is (= "foo@bar.com"
-             (:body (ring-fn-2 req)))))))
+             (:body (ring-fn-2 req))))))
+  (testing "post jwt transformation test"
+    (let [post-transform (fn [m] {:user {:id (:sub m)}
+                                  :org {:id (:foo m)}})
+          wrapper-tr (sut/wrap-jwt-auth-fn
+                      {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                       :post-jwt-format-fn post-transform})
+          ring-fn-1 (wrapper-tr
+                     (fn [req] {:status 200
+                                :body (:identity req)}))
+          req {:headers {"authorization"
+                         (str "Bearer " jwt-token-1)}}]
+      (is (= 200 (:status (ring-fn-1 req))))
+      (is (= {:user {:id "foo@bar.com"}
+              :org {:id "bar"}}
+             (:body (ring-fn-1 req)))))))
 
 (deftest compojure-api-restructuring-test
-  (let [api-1
-        (api {}
-             (context "/test" []
-                      (POST "/test" []
-                            :return {:foo s/Str
-                                     :user_id s/Str}
-                            :body-params  [{lorem :- s/Str ""}]
-                            :summary "Does nothing"
-                            :jwt-params [foo :- s/Str
-                                         user_id :- s/Str
-                                         exp :- s/Num
-                                         {boolean_field
-                                          :- s/Bool "false"}]
-                            {:status 200
-                             :body {:foo foo
-                                    :user_id user_id}})))]
+  (testing "jwt-params"
+    (let [api-1
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:foo s/Str
+                                       :user_id s/Str}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :jwt-params [foo :- s/Str
+                                           user_id :- s/Str
+                                           exp :- s/Num
+                                           {boolean_field
+                                            :- s/Bool "false"}]
+                              {:status 200
+                               :body {:foo foo
+                                      :user_id user_id}})))]
 
-    (is (= {:foo "bar",
-            :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
-           (read-string
-            (slurp (:body (api-1 {:request-method :post
-                                  :uri "/test/test"
-                                  :headers {"accept" "application/edn"
-                                            "content-type" "application/edn"}
-                                  :body-params {:lorem "ipsum"}
-                                  :jwt-params {}
-                                  :jwt decoded-jwt-1}))))))
+      (is (= {:foo "bar",
+              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :jwt-params {}
+                                    :jwt decoded-jwt-1}))))))
 
-    (is (= {:errors
-            {:boolean_field
-             "(not (instance? java.lang.Boolean \"not a boolean\"))"}}
-           (read-string
-            (slurp (:body (api-1 {:request-method :post
-                                  :uri "/test/test"
-                                  :headers {"accept" "application/edn"
-                                            "content-type" "application/edn"}
-                                  :body-params {:lorem "ipsum"}
-                                  :jwt-params {}
-                                  :jwt (assoc decoded-jwt-1
-                                              "boolean_field"
-                                              "not a boolean")}))))))))
+      (is (= {:errors
+              {:boolean_field
+               "(not (instance? java.lang.Boolean \"not a boolean\"))"}}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :jwt-params {}
+                                    :jwt (assoc decoded-jwt-1
+                                                "boolean_field"
+                                                "not a boolean")}))))))))
+  (testing "identity"
+    (let [api-1
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :identity [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))]
+
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all"]}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :identity {:user {:id "user-id"}
+                                               :org {:id "org-id"}
+                                               :scopes ["all"]}})))))))))
+
+(deftest sub-hash-test
+  (testing "positive sub-hash?"
+    (is (sut/sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3}))
+    (is (sut/sub-hash?
+         {:foo 1 :bar #{2 3}}
+         {:foo 1 :bar #{1 2 3 4} :baz 3}))
+
+    (is (sut/sub-hash? {:a :b}
+                       {:a :b}))
+
+    (is (sut/sub-hash? {:a #{:a :b}}
+                       {:a #{:a :b}}))
+
+    (is (sut/sub-hash? {:a #{:a :b}}
+                       {:a #{:a :b :c}}))
+
+    (is (sut/sub-hash? {:foo 1 :bar #{2 3}}
+                       {:foo 1 :bar #{1 2 3 4}})))
+
+  (testing "negative sub-hash?"
+    (is (not (sut/sub-hash? {:a :b}
+                            {:a :c})))
+    (is (not (sut/sub-hash? {:a #{:a :b :c}}
+                            {:a #{:a :b}})))
+    (is (not (sut/sub-hash?
+              {:foo 1 :bar 2}
+              {:foo 1})))
+
+    (is (not (sut/sub-hash?
+              {:foo 1 :bar 2}
+              {:foo 1 :bar 3})))))
 
 (deftest check-jwt-filter-test
   (is (nil? (sut/check-jwt-filter! nil {:foo "quux"}))
@@ -276,6 +352,17 @@
                                    {:foo "bar"
                                     :bar "baz"})))
 
+  (is (nil? (sut/check-jwt-filter! #{{:scopes ["admin"]}}
+                                   {:foo "bar"
+                                    :scopes ["admin" "user"]})))
+
+  (is (try (sut/check-jwt-filter! #{{:scopes ["admin"]}}
+                                  {:foo "bar"
+                                   :scopes ["user"]})
+           false
+           (catch Exception e
+             true)))
+
   (is (try (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
                                   {:foo "quux"})
            false
@@ -285,6 +372,41 @@
   (is (try (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
                                   {:foo "quux"
                                    :baz "bar"})
+           false
+           (catch Exception e
+             true))))
+
+(deftest check-identity-filter-test
+  (is (nil? (sut/check-identity-filter! nil {:foo "quux"}))
+      "JWT should alway pass when there is no filter")
+
+  (is (nil? (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                        {:foo "bar"})))
+
+  (is (nil? (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                        {:foo "bar"
+                                         :bar "baz"})))
+
+  (is (nil? (sut/check-identity-filter! #{{:scopes ["admin"]}}
+                                        {:foo "bar"
+                                         :scopes ["admin" "user"]})))
+
+  (is (try (sut/check-identity-filter! #{{:scopes ["admin"]}}
+                                       {:foo "bar"
+                                        :scopes ["user"]})
+           false
+           (catch Exception e
+             true)))
+
+  (is (try (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                       {:foo "quux"})
+           false
+           (catch Exception e
+             true)))
+
+  (is (try (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
+                                       {:foo "quux"
+                                        :baz "bar"})
            false
            (catch Exception e
              true))))
