@@ -74,13 +74,17 @@
 
 (defn check-jwt-expiry
   "Return a string if JWT expiration check fails, nil otherwise"
-  [jwt jwt-max-lifetime-in-sec]
+  [jwt
+   jwt-max-lifetime-in-sec
+   long-lived-jwt?]
   (let [required-fields #{:nbf :exp :iat}
         jwt-keys (set (keys jwt))]
     (if (set/subset? required-fields jwt-keys)
       (let [now (time-coerce/to-epoch (time/now))
-            expired-secs (- now (+ (:iat jwt 0)
-                                   jwt-max-lifetime-in-sec))
+            expired-secs (if (long-lived-jwt? jwt)
+                           -1
+                           (- now (+ (:iat jwt 0)
+                                     jwt-max-lifetime-in-sec)))
             before-secs (- (:nbf jwt) now)
             expired-lifetime-secs (- now (:exp jwt 0))]
         (cond
@@ -110,14 +114,19 @@
 
 (def no-revocation-strategy (constantly false))
 
+(def no-long-lived-jwt (constantly false))
+
 (defn validate-jwt
   "Run both expiration and user checks,
   return a vec of errors or nothing"
   ([jwt
     jwt-max-lifetime-in-sec
-    jwt-check-fn]
-   (let [exp-vals [(check-jwt-expiry jwt (or jwt-max-lifetime-in-sec
-                                             default-jwt-lifetime-in-sec))]
+    jwt-check-fn
+    long-lived-jwt?]
+   (let [exp-vals [(check-jwt-expiry jwt
+                                     (or jwt-max-lifetime-in-sec
+                                         default-jwt-lifetime-in-sec)
+                                     long-lived-jwt?)]
          checks (if (fn? jwt-check-fn)
                   (or (try (jwt-check-fn jwt)
                            (catch Exception e
@@ -130,7 +139,7 @@
                   (concat checks exp-vals)))))
 
   ([jwt jwt-max-lifetime-in-sec]
-   (validate-jwt jwt jwt-max-lifetime-in-sec nil)))
+   (validate-jwt jwt jwt-max-lifetime-in-sec nil no-long-lived-jwt)))
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
@@ -179,11 +188,13 @@
            jwt-check-fn
            jwt-max-lifetime-in-sec
            post-jwt-format-fn
-           no-jwt-handler]
+           no-jwt-handler
+           long-lived-jwt?]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
          post-jwt-format-fn jwt->user-id
-         no-jwt-handler forbid-no-jwt-header-strategy}}]
+         no-jwt-handler forbid-no-jwt-header-strategy
+         long-lived-jwt? no-long-lived-jwt}}]
   (let [pubkey (public-key pubkey-path)
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
@@ -195,7 +206,10 @@
           (if-let [raw-jwt (get-jwt request)]
             (if-let [jwt (decode raw-jwt pubkey)]
               (if-let [validation-errors
-                       (validate-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)]
+                       (validate-jwt jwt
+                                     jwt-max-lifetime-in-sec
+                                     jwt-check-fn
+                                     long-lived-jwt?)]
                 (log-and-refuse (pr-str jwt)
                                 (format "(%s) %s"
                                         (or (jwt->user-id jwt) "Unkown User ID")
