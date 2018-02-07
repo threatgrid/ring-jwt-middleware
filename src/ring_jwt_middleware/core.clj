@@ -114,6 +114,8 @@
 
 (def no-revocation-strategy (constantly false))
 
+(def no-long-lived-jwt (constantly false))
+
 (defn validate-jwt
   "Run both expiration and user checks,
   return a vec of errors or nothing"
@@ -137,7 +139,7 @@
                   (concat checks exp-vals)))))
 
   ([jwt jwt-max-lifetime-in-sec]
-   (validate-jwt jwt jwt-max-lifetime-in-sec nil (constantly false))))
+   (validate-jwt jwt jwt-max-lifetime-in-sec nil no-long-lived-jwt)))
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
@@ -178,8 +180,6 @@
              (cond-> {:id (get jwt (str prefix "/oauth/client/id"))}
                client-name (assoc :name client-name)))})
 
-
-(def no-long-lived-jwt (constantly false))
 
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
