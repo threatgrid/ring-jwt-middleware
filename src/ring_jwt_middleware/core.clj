@@ -328,4 +328,20 @@
   (update-in acc
              [:lets]
              into
-             ['_ `(check-identity-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
+             ['_ `(check-identity-filter! ~authorized (:identity ~'+compojure-api-request+))]))
+
+
+;; If you use scopes to generate your identities
+;; this is helpful to filter routes by scopes
+;;
+;; (POST "/foo" [] :scopes #{"admin"} ...)
+;;
+;; (POST "/foo" [] :scopes #{"admin" "foo"}
+;;   users must have admin and foo scopes)
+(defmethod compojure.api.meta/restructure-param :scopes [_ authorized acc]
+  (update-in acc
+             [:lets]
+             into
+             ['_ `(clojure.set/subset? (set ~authorized)
+                                       (set (get-in  ~'+compojure-api-request+
+                                                     [:identity :scopes])))]))
