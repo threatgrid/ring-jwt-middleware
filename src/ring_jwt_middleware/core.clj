@@ -128,7 +128,7 @@
                                          default-jwt-lifetime-in-sec)
                                      long-lived-jwt?)]
          checks (if (fn? jwt-check-fn)
-                  (or (try (jwt-check-fn jwt)
+                  (or (try (seq (jwt-check-fn jwt))
                            (catch Exception e
                              (log/errorf "jwt-check-fn thrown an exception on: %s"
                                          (pr-str jwt))
@@ -171,7 +171,11 @@
   - org-id
   "
   [prefix jwt]
-  {:user   {:id (jwt->user-id jwt)}
+  {:user   (let [user-name (get jwt (str prefix "/user/name"))
+                 user-email (get jwt (str prefix "/user/email"))]
+             (cond-> {:id (jwt->user-id jwt)}
+               user-name (assoc :name user-name)
+               user-email (assoc :email user-email)))
    :scopes (set (get jwt (str prefix "/scopes")))
    :org    (let [org-name (get jwt (str prefix "/org/name"))]
              (cond-> {:id (get jwt (str prefix "/org/id"))}
@@ -324,4 +328,20 @@
   (update-in acc
              [:lets]
              into
-             ['_ `(check-identity-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
+             ['_ `(check-identity-filter! ~authorized (:identity ~'+compojure-api-request+))]))
+
+
+;; If you use scopes to generate your identities
+;; this is helpful to filter routes by scopes
+;;
+;; (POST "/foo" [] :scopes #{"admin"} ...)
+;;
+;; (POST "/foo" [] :scopes #{"admin" "foo"}
+;;   users must have admin and foo scopes)
+(defmethod compojure.api.meta/restructure-param :scopes [_ authorized acc]
+  (update-in acc
+             [:lets]
+             into
+             ['_ `(clojure.set/subset? (set ~authorized)
+                                       (set (get-in  ~'+compojure-api-request+
+                                                     [:identity :scopes])))]))

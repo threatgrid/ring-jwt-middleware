@@ -447,3 +447,15 @@
            false
            (catch Exception e
              true))))
+
+(deftest jwt->oauth-ids-test
+  (is (= {:user {:id "user-id"}
+          :org {:id "org-id"}
+          :scopes #{"scope1" "scope2"}
+          :client {:id "client-id"}}
+         (sut/jwt->oauth-ids
+          "http://example.com/claims"
+          {:sub "user-id"
+           "http://example.com/claims/scopes" ["scope1" "scope2"]
+           "http://example.com/claims/org/id" "org-id"
+           "http://example.com/claims/oauth/client/id" "client-id"}))))
