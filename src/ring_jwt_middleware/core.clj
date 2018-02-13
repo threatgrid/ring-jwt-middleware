@@ -263,9 +263,11 @@
   (->> m1
        (map (fn [[k v1]]
               (let [v2 (get m2 k)]
-                (if (and (coll? v1) (coll? v2))
-                  (set/subset? (set v1) (set v2))
-                  (= v1 v2)))))
+                (if (map? v1)
+                  (sub-hash? v1 v2)
+                  (if (and (coll? v1) (coll? v2))
+                    (set/subset? (set v1) (set v2))
+                    (= v1 v2))))))
        (every? true?)))
 
 (defn check-jwt-filter! [required jwt]
@@ -331,6 +333,17 @@
              ['_ `(check-identity-filter! ~authorized (:identity ~'+compojure-api-request+))]))
 
 
+(defn check-scopes! [required scopes]
+  (when (and (some? required)
+             (not (clojure.set/subset? required scopes)))
+    (log/errorf "Unauthorized access attempt: %s"
+                (pr-str
+                 {:text ":scopes params mismatch"
+                  :required-scopes required
+                  :identity-scopes scopes}))
+    (ring.util.http-response/unauthorized!
+     {:msg "You don't have the required credentials to access this route"})))
+
 ;; If you use scopes to generate your identities
 ;; this is helpful to filter routes by scopes
 ;;
@@ -342,6 +355,6 @@
   (update-in acc
              [:lets]
              into
-             ['_ `(clojure.set/subset? (set ~authorized)
-                                       (set (get-in  ~'+compojure-api-request+
-                                                     [:identity :scopes])))]))
+             ['_ `(check-scopes! (set ~authorized)
+                                 (set (get-in  ~'+compojure-api-request+
+                                               [:identity :scopes])))]))
