@@ -344,7 +344,253 @@
                                     :body-params {:lorem "ipsum"}
                                     :identity {:user {:id "user-id"}
                                                :org {:id "org-id"}
-                                               :scopes ["all"]}})))))))))
+                                               :scopes ["all"]}}))))))))
+  (testing "jwt-filter"
+    (let [api-1
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:foo s/Str
+                                       :user_id s/Str}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :jwt-params [foo :- s/Str
+                                           user_id :- s/Str
+                                           exp :- s/Num
+                                           {boolean_field
+                                            :- s/Bool "false"}]
+                              :jwt-filter #{{:foo "bar"}}
+                              {:status 200
+                               :body {:foo foo
+                                      :user_id user_id}})))]
+
+      (is (= {:foo "bar",
+              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :jwt-params {}
+                                    :jwt decoded-jwt-1})))))))
+    (let [api-2
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:foo s/Str
+                                       :user_id s/Str}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :jwt-params [foo :- s/Str
+                                           user_id :- s/Str
+                                           exp :- s/Num
+                                           {boolean_field
+                                            :- s/Bool "false"}]
+                              :jwt-filter #{{:foo "foo"}}
+                              {:status 200
+                               :body {:foo foo
+                                      :user_id user_id}})))
+          response (api-2 {:request-method :post
+                           :uri "/test/test"
+                           :headers {"accept" "application/edn"
+                                     "content-type" "application/edn"}
+                           :body-params {:lorem "ipsum"}
+                           :jwt-params {}
+                           :jwt decoded-jwt-1})]
+
+      (is (= 401 (:status response)))
+      (is (= {:msg "You don't have the required credentials to access this route"}
+             (read-string (slurp (:body response)))))))
+
+  (testing "identity-filter"
+    (let [api-1
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :identity [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              :identity-filter #{ {:user {:id "user-id"}} }
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))]
+
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all"]}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :identity {:user {:id "user-id"}
+                                               :org {:id "org-id"}
+                                               :scopes ["all"]}})))))))
+    (let [api-2
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :identity [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              :identity-filter #{ {:user {:id "bad-id"}} }
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))
+          response (api-2 {:request-method :post
+                           :uri "/test/test"
+                           :headers {"accept" "application/edn"
+                                     "content-type" "application/edn"}
+                           :body-params {:lorem "ipsum"}
+                           :identity {:user {:id "user-id"}
+                                      :org {:id "org-id"}
+                                      :scopes ["all"]}})]
+      (is (= 401 (:status response)))
+      (is (= {:msg "You don't have the required credentials to access this route"}
+             (read-string (slurp (:body response))))))
+
+    (let [api-3
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :identity [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              :identity-filter #{ {:scopes #{"all"}} }
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))
+          response (api-3 {:request-method :post
+                           :uri "/test/test"
+                           :headers {"accept" "application/edn"
+                                     "content-type" "application/edn"}
+                           :body-params {:lorem "ipsum"}
+                           :identity {:user {:id "user-id"}
+                                      :org {:id "org-id"}
+                                      :scopes ["all" "foo"]}})]
+      (is (= 200 (:status response)))
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all" "foo"]}
+             (read-string (slurp (:body response)))))))
+
+  (testing "scopes"
+    (let [api-1
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :identity [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              :scopes #{"all"}
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))]
+
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all"]}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :identity {:user {:id "user-id"}
+                                               :org {:id "org-id"}
+                                               :scopes ["all"]}})))))))
+    (let [api-2
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :identity [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              :scopes #{ "foo" }
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))
+          response (api-2 {:request-method :post
+                           :uri "/test/test"
+                           :headers {"accept" "application/edn"
+                                     "content-type" "application/edn"}
+                           :body-params {:lorem "ipsum"}
+                           :identity {:user {:id "user-id"}
+                                      :org {:id "org-id"}
+                                      :scopes ["all"]}})]
+      (is (= 401 (:status response)))
+      (is (= {:msg "You don't have the required credentials to access this route"}
+             (read-string (slurp (:body response))))))
+
+    (let [api-3
+          (api {}
+               (context "/test" []
+                        (POST "/test" []
+                              :return {:user-id s/Str
+                                       :org-id s/Str
+                                       :scopes [s/Str]}
+                              :body-params  [{lorem :- s/Str ""}]
+                              :summary "Does nothing"
+                              :identity [user :- {:id s/Str}
+                                         org :- {:id s/Str}
+                                         scopes :-  [s/Str]]
+                              :scopes #{ "all" "foo" }
+                              {:status 200
+                               :body {:user-id (:id user)
+                                      :org-id (:id org)
+                                      :scopes scopes}})))
+
+          response-1 (api-3 {:request-method :post
+                             :uri "/test/test"
+                             :headers {"accept" "application/edn"
+                                       "content-type" "application/edn"}
+                             :body-params {:lorem "ipsum"}
+                             :identity {:user {:id "user-id"}
+                                        :org {:id "org-id"}
+                                        :scopes ["all" "foo"]}})
+          response-2 (api-3 {:request-method :post
+                             :uri "/test/test"
+                             :headers {"accept" "application/edn"
+                                       "content-type" "application/edn"}
+                             :body-params {:lorem "ipsum"}
+                             :identity {:user {:id "user-id"}
+                                        :org {:id "org-id"}
+                                        :scopes ["all"]}})]
+      (is (= 200 (:status response-1)))
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all" "foo"]}
+             (read-string (slurp (:body response-1)))))
+
+      (is (= 401 (:status response-2)))
+      (is (= {:msg "You don't have the required credentials to access this route"}
+             (read-string (slurp (:body response-2)))))))
+
+  )
 
 (deftest sub-hash-test
   (testing "positive sub-hash?"
@@ -428,6 +674,41 @@
                                         {:foo "bar"
                                          :scopes ["admin" "user"]})))
 
+  (is (nil? (sut/check-identity-filter! #{{:user {:id "foo"}}
+                                          {:user {:id "bar"}}}
+                                        {:user {:id "foo"}
+                                         :scopes ["admin" "user"]})))
+
+  (is (nil? (sut/check-identity-filter! #{{:user {:id "foo"}}
+                                          {:user {:id "bar"}}}
+                                        {:user {:id "foo"
+                                                :name "user-name"}
+                                         :scopes ["admin" "user"]})))
+  (is (nil? (sut/check-identity-filter! #{{:user {:id "foo"}}
+                                          {:user {:id "bar"}}}
+                                        {:user {:id "bar"
+                                                :name "user-name"}
+                                         :scopes ["admin" "user"]})))
+
+  (is (nil? (sut/check-identity-filter! #{{:user {:scopes #{"foo"}}}}
+                                        {:user {:scopes ["foo" "bar"]}
+                                         :a "b"})))
+
+  (is (try (sut/check-identity-filter! #{{:user {:scopes #{"foo"}}}}
+                                       {:user {:scopes ["bar"]}
+                                        :a "b"})
+           false
+           (catch Exception e
+             true)))
+
+  (is (try (sut/check-identity-filter! #{{:user {:id "foo"}}
+                                         {:user {:id "bar"}}}
+                                       {:user {:id "baz"}
+                                        :scopes ["admin" "user"]})
+           false
+           (catch Exception e
+             true)))
+
   (is (try (sut/check-identity-filter! #{{:scopes ["admin"]}}
                                        {:foo "bar"
                                         :scopes ["user"]})
@@ -447,3 +728,15 @@
            false
            (catch Exception e
              true))))
+
+(deftest jwt->oauth-ids-test
+  (is (= {:user {:id "user-id"}
+          :org {:id "org-id"}
+          :scopes #{"scope1" "scope2"}
+          :client {:id "client-id"}}
+         (sut/jwt->oauth-ids
+          "http://example.com/claims"
+          {:sub "user-id"
+           "http://example.com/claims/scopes" ["scope1" "scope2"]
+           "http://example.com/claims/org/id" "org-id"
+           "http://example.com/claims/oauth/client/id" "client-id"}))))

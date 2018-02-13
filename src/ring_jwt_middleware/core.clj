@@ -128,7 +128,7 @@
                                          default-jwt-lifetime-in-sec)
                                      long-lived-jwt?)]
          checks (if (fn? jwt-check-fn)
-                  (or (try (jwt-check-fn jwt)
+                  (or (try (seq (jwt-check-fn jwt))
                            (catch Exception e
                              (log/errorf "jwt-check-fn thrown an exception on: %s"
                                          (pr-str jwt))
@@ -171,7 +171,11 @@
   - org-id
   "
   [prefix jwt]
-  {:user   {:id (jwt->user-id jwt)}
+  {:user   (let [user-name (get jwt (str prefix "/user/name"))
+                 user-email (get jwt (str prefix "/user/email"))]
+             (cond-> {:id (jwt->user-id jwt)}
+               user-name (assoc :name user-name)
+               user-email (assoc :email user-email)))
    :scopes (set (get jwt (str prefix "/scopes")))
    :org    (let [org-name (get jwt (str prefix "/org/name"))]
              (cond-> {:id (get jwt (str prefix "/org/id"))}
@@ -259,9 +263,11 @@
   (->> m1
        (map (fn [[k v1]]
               (let [v2 (get m2 k)]
-                (if (and (coll? v1) (coll? v2))
-                  (set/subset? (set v1) (set v2))
-                  (= v1 v2)))))
+                (if (map? v1)
+                  (sub-hash? v1 v2)
+                  (if (and (coll? v1) (coll? v2))
+                    (set/subset? (set v1) (set v2))
+                    (= v1 v2))))))
        (every? true?)))
 
 (defn check-jwt-filter! [required jwt]
@@ -324,4 +330,31 @@
   (update-in acc
              [:lets]
              into
-             ['_ `(check-identity-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
+             ['_ `(check-identity-filter! ~authorized (:identity ~'+compojure-api-request+))]))
+
+
+(defn check-scopes! [required scopes]
+  (when (and (some? required)
+             (not (clojure.set/subset? required scopes)))
+    (log/errorf "Unauthorized access attempt: %s"
+                (pr-str
+                 {:text ":scopes params mismatch"
+                  :required-scopes required
+                  :identity-scopes scopes}))
+    (ring.util.http-response/unauthorized!
+     {:msg "You don't have the required credentials to access this route"})))
+
+;; If you use scopes to generate your identities
+;; this is helpful to filter routes by scopes
+;;
+;; (POST "/foo" [] :scopes #{"admin"} ...)
+;;
+;; (POST "/foo" [] :scopes #{"admin" "foo"}
+;;   users must have admin and foo scopes)
+(defmethod compojure.api.meta/restructure-param :scopes [_ authorized acc]
+  (update-in acc
+             [:lets]
+             into
+             ['_ `(check-scopes! (set ~authorized)
+                                 (set (get-in  ~'+compojure-api-request+
+                                               [:identity :scopes])))]))
