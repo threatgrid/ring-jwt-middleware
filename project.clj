@@ -5,7 +5,7 @@
             :distribution :repo}
   :url "http://github.com/threatgrid/ring-jwt-middleware"
   :dependencies [[org.clojure/clojure "1.8.0"]
-                 [yogsototh/clj-jwt "0.2.0"]
+                 [yogsototh/clj-jwt "0.2.1"]
                  [threatgrid/clj-momo "0.2.9"]
                  [org.clojure/tools.logging "0.3.1"]
                  [metosin/ring-http-response "0.8.2"]
