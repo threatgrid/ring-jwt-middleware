@@ -503,13 +503,13 @@
                               :identity [user :- {:id s/Str}
                                          org :- {:id s/Str}
                                          scopes :-  [s/Str]]
-                              :scopes #{"all"}
+                              :scopes #{"scope1" "root/sub1/sub2:read"}
                               {:status 200
                                :body {:user-id (:id user)
                                       :org-id (:id org)
                                       :scopes scopes}})))]
 
-      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all"]}
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["scope1" "root/sub1/sub2:read"]}
              (read-string
               (slurp (:body (api-1 {:request-method :post
                                     :uri "/test/test"
@@ -518,7 +518,43 @@
                                     :body-params {:lorem "ipsum"}
                                     :identity {:user {:id "user-id"}
                                                :org {:id "org-id"}
-                                               :scopes ["all"]}})))))))
+                                               :scopes ["scope1" "root/sub1/sub2:read"]}}))))))
+
+      (is (= {:msg "You don't have the required credentials to access this route"}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :identity {:user {:id "user-id"}
+                                               :org {:id "org-id"}
+                                               :scopes ["scope1"]}}))))))
+
+      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["scope1" "root"]}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :identity {:user {:id "user-id"}
+                                               :org {:id "org-id"}
+                                               :scopes ["scope1" "root"]}})))))
+          "User with scope1 and root scopes should have access")
+
+      (is (= {:msg "You don't have the required credentials to access this route"}
+             (read-string
+              (slurp (:body (api-1 {:request-method :post
+                                    :uri "/test/test"
+                                    :headers {"accept" "application/edn"
+                                              "content-type" "application/edn"}
+                                    :body-params {:lorem "ipsum"}
+                                    :identity {:user {:id "user-id"}
+                                               :org {:id "org-id"}
+                                               :scopes ["scope1" "root:write"]}})))))
+          "User shouldn't have access to the scope root/sub1/sub2:read")
+      )
     (let [api-2
           (api {}
                (context "/test" []
@@ -740,3 +776,74 @@
            "http://example.com/claims/scopes" ["scope1" "scope2"]
            "http://example.com/claims/org/id" "org-id"
            "http://example.com/claims/oauth/client/id" "client-id"}))))
+
+(deftest scopes-logic-test
+  (is (sut/sub-list ["a" "b"] ["a"]))
+  (is (sut/sub-list ["a" "b"] ["a" "b"]))
+  (is (not (sut/sub-list ["a"] ["a" "b"])))
+
+  (is (sut/match-access #{:read}
+                    #{:read :write}))
+  (is (sut/match-access #{:read :write}
+                    #{:read :write}))
+  (is (not (sut/match-access #{:read :write}
+                         #{:write})))
+
+
+  (is (sut/match-scope (sut/to-scope-repr "sub")
+                   (sut/to-scope-repr "sub")))
+  (is (sut/match-scope (sut/to-scope-repr "sub:read")
+                   (sut/to-scope-repr "sub")))
+  (is (not (sut/match-scope (sut/to-scope-repr "root/sub")
+                        (sut/to-scope-repr "sub"))))
+
+  (is (sut/accepted-by-scopes
+       #{(sut/to-scope-repr "enrich")
+         (sut/to-scope-repr "auth")}
+       #{"enrich" "auth"}))
+
+  (is (sut/accepted-by-scopes
+       #{(sut/to-scope-repr "enrich")
+         (sut/to-scope-repr "auth:read")}
+       #{"enrich" "auth"}))
+
+  (is (not (sut/accepted-by-scopes
+            #{(sut/to-scope-repr "enrich")
+              (sut/to-scope-repr "auth")}
+            #{})))
+  )
+
+(deftest accepted-by-scopes
+  (let [to-scps #(set (map sut/to-scope-repr %))]
+    ;; subset is accepted
+    (is (sut/accepted-by-scopes (to-scps #{"foo"}) #{"foo"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo"}) #{"foo" "bar"}))
+    (is (not (sut/accepted-by-scopes (to-scps #{"bar"}) #{"foo"})))
+    (is (not (sut/accepted-by-scopes (to-scps #{"foo" "bar"}) #{"foo"})))
+    (is (sut/accepted-by-scopes (to-scps #{"foo" "bar"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo" "bar"}) #{"foo" "bar" "baz"}))
+    ;; superpaths are accepted
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar"}) #{"foo"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz"}) #{"foo"}))
+    (is (not (sut/accepted-by-scopes (to-scps #{"foobar/baz"}) #{"foo"})))
+    ;; access are respected
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar:read"}) #{"foo"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:read"}) #{"foo:read"}))
+    (is (not (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo:read"})))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar:read"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:read"}) #{"foo:read" "bar"}))
+    (is (not (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo:read" "bar"})))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar:read" "bar"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write" "bar"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw" "bar"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw" "bar"}) #{"foo" "bar"}))
+    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:read" "bar"}) #{"foo:read" "bar"}))
+    (is (not (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write" "bar"}) #{"foo:read" "bar"})))
+
+    ))
