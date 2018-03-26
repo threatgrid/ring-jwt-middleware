@@ -334,6 +334,18 @@
 
 
 (defn to-scope-repr
+  "Transform a textual scope as an internal representation to help
+  check rules typically
+
+  > \"foo\"
+  {:path [\"foo\"]
+   :access #{:read :write}}
+
+  > \"foo/bar/baz:write\"
+  {:path [\"foo\" \"bar\" \"baz\"]
+   :access #{:write}}
+
+  "
   [txt]
   (let [[path access] (str/split txt #":")]
     {:path (str/split path #"/")
@@ -343,7 +355,7 @@
                "rw"    #{:read :write}
                nil     #{:read :write}
                (ring.util.http-response/unauthorized!
-                {:msg "bad access part in the scope, must be read or nothin."}))}))
+                {:msg "bad access part in the scope, must be read or nothing."}))}))
 (defn sub-list
   [req-list scope-path-list]
   (let [n (count scope-path-list)]
@@ -377,15 +389,14 @@
   All mandatory scopes must be sub-scopes of at least one user scopes.
   "
   [required scopes]
-  (let [scps (map to-scope-repr scopes)]
-    (every? (fn [req-scope]
-              (some #(match-scope req-scope %) scps))
-            required)))
+  (every? (fn [req-scope]
+            (some #(match-scope req-scope %) scopes))
+          required))
 
 
 (defn check-scopes! [required scopes]
   (when (and (some? required)
-             (not (accepted-by-scopes required scopes)))
+             (not (accepted-by-scopes required (map to-scope-repr scopes))))
     (log/errorf "Unauthorized access attempt: %s"
                 (pr-str
                  {:text ":scopes params mismatch"

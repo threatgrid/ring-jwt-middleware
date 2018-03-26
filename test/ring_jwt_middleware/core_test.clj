@@ -783,67 +783,67 @@
   (is (not (sut/sub-list ["a"] ["a" "b"])))
 
   (is (sut/match-access #{:read}
-                    #{:read :write}))
+                        #{:read :write}))
   (is (sut/match-access #{:read :write}
-                    #{:read :write}))
+                        #{:read :write}))
   (is (not (sut/match-access #{:read :write}
-                         #{:write})))
+                             #{:write})))
 
 
   (is (sut/match-scope (sut/to-scope-repr "sub")
-                   (sut/to-scope-repr "sub")))
+                       (sut/to-scope-repr "sub")))
   (is (sut/match-scope (sut/to-scope-repr "sub:read")
-                   (sut/to-scope-repr "sub")))
+                       (sut/to-scope-repr "sub")))
   (is (not (sut/match-scope (sut/to-scope-repr "root/sub")
-                        (sut/to-scope-repr "sub"))))
+                            (sut/to-scope-repr "sub"))))
 
   (is (sut/accepted-by-scopes
        #{(sut/to-scope-repr "enrich")
          (sut/to-scope-repr "auth")}
-       #{"enrich" "auth"}))
+       #{(sut/to-scope-repr "enrich")
+         (sut/to-scope-repr "auth")}))
 
   (is (sut/accepted-by-scopes
        #{(sut/to-scope-repr "enrich")
          (sut/to-scope-repr "auth:read")}
-       #{"enrich" "auth"}))
+       #{(sut/to-scope-repr "enrich")
+         (sut/to-scope-repr "auth")}))
 
   (is (not (sut/accepted-by-scopes
             #{(sut/to-scope-repr "enrich")
               (sut/to-scope-repr "auth")}
-            #{})))
-  )
+            #{}))))
 
 (deftest accepted-by-scopes
-  (let [to-scps #(set (map sut/to-scope-repr %))]
-    ;; subset is accepted
-    (is (sut/accepted-by-scopes (to-scps #{"foo"}) #{"foo"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo"}) #{"foo" "bar"}))
-    (is (not (sut/accepted-by-scopes (to-scps #{"bar"}) #{"foo"})))
-    (is (not (sut/accepted-by-scopes (to-scps #{"foo" "bar"}) #{"foo"})))
-    (is (sut/accepted-by-scopes (to-scps #{"foo" "bar"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo" "bar"}) #{"foo" "bar" "baz"}))
-    ;; superpaths are accepted
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar"}) #{"foo"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz"}) #{"foo"}))
-    (is (not (sut/accepted-by-scopes (to-scps #{"foobar/baz"}) #{"foo"})))
-    ;; access are respected
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar:read"}) #{"foo"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:read"}) #{"foo:read"}))
-    (is (not (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo:read"})))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar:read"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:read"}) #{"foo:read" "bar"}))
-    (is (not (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write"}) #{"foo:read" "bar"})))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar:read" "bar"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write" "bar"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw" "bar"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:rw" "bar"}) #{"foo" "bar"}))
-    (is (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:read" "bar"}) #{"foo:read" "bar"}))
-    (is (not (sut/accepted-by-scopes (to-scps #{"foo/bar/baz:write" "bar"}) #{"foo:read" "bar"})))
-
-    ))
+  (let [to-scps #(set (map sut/to-scope-repr %))
+        check-scopes #(sut/accepted-by-scopes (to-scps %1) (to-scps %2))]
+    (testing " subset is accepted"
+      (is (check-scopes #{"foo"} #{"foo"}))
+      (is (check-scopes  #{"foo"} #{"foo" "bar"}))
+      (is (not (check-scopes  #{"bar"} #{"foo"})))
+      (is (not (check-scopes  #{"foo" "bar"} #{"foo"})))
+      (is (check-scopes  #{"foo" "bar"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo" "bar"} #{"foo" "bar" "baz"})))
+    (testing "superpath are accepted"
+      (is (check-scopes  #{"foo/bar"} #{"foo"}))
+      (is (check-scopes  #{"foo/bar/baz"} #{"foo"}))
+      (is (not (check-scopes  #{"foobar/baz"} #{"foo"}))))
+    (testing "access are respected"
+      (is (check-scopes  #{"foo/bar:read"} #{"foo"}))
+      (is (check-scopes  #{"foo/bar/baz:write"} #{"foo"}))
+      (is (check-scopes  #{"foo/bar/baz:rw"} #{"foo"}))
+      (is (check-scopes  #{"foo/bar/baz:rw"} #{"foo"}))
+      (is (check-scopes  #{"foo/bar/baz:read"} #{"foo:read"}))
+      (is (not (check-scopes  #{"foo/bar/baz:write"} #{"foo:read"})))
+      (is (check-scopes  #{"foo/bar:read"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:write"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:rw"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:rw"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:read"} #{"foo:read" "bar"}))
+      (is (not (check-scopes  #{"foo/bar/baz:write"} #{"foo:read" "bar"})))
+      (is (check-scopes  #{"foo/bar:read" "bar"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:write" "bar"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:rw" "bar"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:rw" "bar"} #{"foo" "bar"}))
+      (is (check-scopes  #{"foo/bar/baz:read" "bar"} #{"foo:read" "bar"}))
+      (is (not (check-scopes  #{"foo/bar/baz:write" "bar"} #{"foo:read" "bar"}))))))
