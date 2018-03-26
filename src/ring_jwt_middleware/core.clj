@@ -333,9 +333,70 @@
              ['_ `(check-identity-filter! ~authorized (:identity ~'+compojure-api-request+))]))
 
 
+(defn to-scope-repr
+  "Transform a textual scope as an internal representation to help
+  check rules typically
+
+  > \"foo\"
+  {:path [\"foo\"]
+   :access #{:read :write}}
+
+  > \"foo/bar/baz:write\"
+  {:path [\"foo\" \"bar\" \"baz\"]
+   :access #{:write}}
+
+  "
+  [txt]
+  (let [[path access] (str/split txt #":")]
+    {:path (str/split path #"/")
+     :access (case access
+               "read"  #{:read}
+               "write" #{:write}
+               "rw"    #{:read :write}
+               nil     #{:read :write}
+               (ring.util.http-response/unauthorized!
+                {:msg "bad access part in the scope, must be read or nothing."}))}))
+(defn sub-list
+  [req-list scope-path-list]
+  (let [n (count scope-path-list)]
+    (= (take n req-list) scope-path-list)))
+
+(defn match-access
+  [required-access access]
+  (clojure.set/subset? required-access access))
+
+(defn match-scope
+  [required-scope scope]
+  (and (match-access (:access required-scope) (:access scope))
+       (sub-list (:path required-scope) (:path scope))))
+
+
+(defn accepted-by-scopes
+  "scopes should be strings.
+  if none of the string contains a `/` nor a `:`.
+  It works as is a subset of.
+
+  :scopes #{\"foo\" \"bar\"}
+  only people with scopes which are super sets of
+  #{\"foo\" \"bar\"}
+  will be allowed to use the route.
+
+  scopes are considered as path with read/write access.
+  so \"foo/bar/baz:read\" is a sub-scope of \"foo\"
+  and of \"foo:read\".
+
+  So the more precise rule of access is.
+  All mandatory scopes must be sub-scopes of at least one user scopes.
+  "
+  [required scopes]
+  (every? (fn [req-scope]
+            (some #(match-scope req-scope %) scopes))
+          required))
+
+
 (defn check-scopes! [required scopes]
   (when (and (some? required)
-             (not (clojure.set/subset? required scopes)))
+             (not (accepted-by-scopes required (map to-scope-repr scopes))))
     (log/errorf "Unauthorized access attempt: %s"
                 (pr-str
                  {:text ":scopes params mismatch"
@@ -355,6 +416,6 @@
   (update-in acc
              [:lets]
              into
-             ['_ `(check-scopes! (set ~authorized)
+             ['_ `(check-scopes! (set (map to-scope-repr ~authorized))
                                  (set (get-in  ~'+compojure-api-request+
                                                [:identity :scopes])))]))
