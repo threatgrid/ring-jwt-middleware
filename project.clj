@@ -4,8 +4,8 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"
             :distribution :repo}
   :url "http://github.com/threatgrid/ring-jwt-middleware"
-  :deploy-repositories [["releases" {:url "https://clojars.org/repo"
-                                     :creds :gpg}]]
+  :deploy-repositories [["releases" {:url "https://clojars.org/repo" :creds :gpg}]
+                        ["snapshots" {:url "https://clojars.org/repo" :creds :gpg}]]
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [yogsototh/clj-jwt "0.2.1"]
                  [threatgrid/clj-momo "0.2.9"]
