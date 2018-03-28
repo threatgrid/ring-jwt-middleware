@@ -393,6 +393,12 @@
             (some #(match-scope req-scope %) scopes))
           required))
 
+(defn check-scopes
+  "This function might be useful to be used directly instead of just relying
+  on the :scope."
+  [required scopes]
+  (accepted-by-scopes (map to-scope-repr required)
+                      (map to-scope-repr scopes)))
 
 (defn check-scopes! [required scopes]
   (when (and (some? required)
