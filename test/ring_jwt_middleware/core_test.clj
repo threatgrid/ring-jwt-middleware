@@ -766,16 +766,51 @@
              true))))
 
 (deftest jwt->oauth-ids-test
-  (is (= {:user {:id "user-id"}
-          :org {:id "org-id"}
-          :scopes #{"scope1" "scope2"}
-          :client {:id "client-id"}}
+  (is (= {:scopes #{"scope1" "scope2"},
+          :org {:id "org-id"},
+          :oauth {:client {:id "client-id"}},
+          :user {:id "user-id"}}
          (sut/jwt->oauth-ids
           "http://example.com/claims"
           {:sub "user-id"
            "http://example.com/claims/scopes" ["scope1" "scope2"]
            "http://example.com/claims/org/id" "org-id"
-           "http://example.com/claims/oauth/client/id" "client-id"}))))
+           "http://example.com/claims/oauth/client/id" "client-id"})))
+
+  (is (= {:scopes #{"scope1" "scope2"},
+          :org {:id "org-id"},
+          :oauth {:client {:id "client-id"}},
+          :user {:id "user-id"}}
+         (sut/jwt->oauth-ids
+          "http://example.com/claims"
+          {:sub "user-id"
+           "http://example.com/claims/scopes" ["scope1" "scope2"]
+           "http://example.com/claims/user/id" "BAD-USER-ID"
+           "http://example.com/claims/org/id" "org-id"
+           "http://example.com/claims/oauth/client/id" "client-id"})))
+
+  (is (= {:user
+          {:idp {:name "Visibility", :id "iroh"},
+           :name "John Doe",
+           :email "john.doe@dev.null",
+           :id "user-id"},
+          :oauth {:kind "code", :client {:id "client-id"}},
+          :org {:name "ACME Inc.", :id "org-id"},
+          :scopes #{"scope1" "scope2"}}
+         (sut/jwt->oauth-ids
+          "http://example.com/claims"
+          {:sub "user-id"
+           "http://example.com/claims/scopes" ["scope1" "scope2"]
+           "http://example.com/claims/user/id" "user-id"
+           "http://example.com/claims/user/name" "John Doe"
+           "http://example.com/claims/user/email" "john.doe@dev.null"
+           "http://example.com/claims/user/idp/id" "iroh"
+           "http://example.com/claims/user/idp/name" "Visibility"
+           "http://example.com/claims/org/id" "org-id"
+           "http://example.com/claims/org/name" "ACME Inc."
+           "http://example.com/claims/oauth/client/id" "client-id"
+           "http://example.com/claims/oauth/kind" "code"})))
+  )
 
 (deftest scopes-logic-test
   (is (sut/sub-list ["a" "b"] ["a"]))
