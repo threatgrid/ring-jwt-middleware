@@ -172,10 +172,12 @@
   "
   [prefix jwt]
   {:user   (let [user-name (get jwt (str prefix "/user/name"))
-                 user-email (get jwt (str prefix "/user/email"))]
+                 user-email (get jwt (str prefix "/user/email"))
+                 user-idp (get jwt (str prefix "user/idp/id"))]
              (cond-> {:id (jwt->user-id jwt)}
                user-name (assoc :name user-name)
-               user-email (assoc :email user-email)))
+               user-email (assoc :email user-email)
+               user-idp   (assoc :idp user-idp)))
    :scopes (set (get jwt (str prefix "/scopes")))
    :org    (let [org-name (get jwt (str prefix "/org/name"))]
              (cond-> {:id (get jwt (str prefix "/org/id"))}
