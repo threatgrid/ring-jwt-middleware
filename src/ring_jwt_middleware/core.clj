@@ -169,23 +169,59 @@
 
   - user-id, client-id, scopes
   - org-id
+
+  mainly transform a list of <prefix>/foo/bar/baz value into a deep nested map.
+  For example:
+
+  (sut/jwt->oauth-ids
+          \"http://example.com/claims\"
+          {:sub \"user-id\"
+           \"http://example.com/claims/scopes\" [\"scope1\" \"scope2\"]
+           \"http://example.com/claims/user/id\" \"user-id\"
+           \"http://example.com/claims/user/name\" \"John Doe\"
+           \"http://example.com/claims/user/email\" \"john.doe@dev.null\"
+           \"http://example.com/claims/user/idp/id\" \"iroh\"
+           \"http://example.com/claims/user/idp/name\" \"Visibility\"
+           \"http://example.com/claims/org/id\" \"org-id\"
+           \"http://example.com/claims/org/name\" \"ACME Inc.\"
+           \"http://example.com/claims/oauth/client/id\" \"client-id\"
+           \"http://example.com/claims/oauth/kind\" \"code\"})
+
+  => {:user {:idp {:name \"Visibility\"
+                   :id \"iroh\"},
+             :name \"John Doe\",
+             :email \"john.doe@dev.null\",
+             :id \"user-id\"}
+      :oauth {:kind \"code\"
+              :client {:id \"client-id\"}},
+      :org   {:name \"ACME Inc.\"
+              :id \"org-id\"},
+      :scopes #{\"scope1\" \"scope2\"}}
   "
   [prefix jwt]
-  {:user   (let [user-name (get jwt (str prefix "/user/name"))
-                 user-email (get jwt (str prefix "/user/email"))
-                 user-idp (get jwt (str prefix "user/idp/id"))]
-             (cond-> {:id (jwt->user-id jwt)}
-               user-name (assoc :name user-name)
-               user-email (assoc :email user-email)
-               user-idp   (assoc :idp user-idp)))
-   :scopes (set (get jwt (str prefix "/scopes")))
-   :org    (let [org-name (get jwt (str prefix "/org/name"))]
-             (cond-> {:id (get jwt (str prefix "/org/id"))}
-               org-name (assoc :name org-name)))
-   :client (let [client-name (get jwt (str prefix "/oauth/client/name"))]
-             (cond-> {:id (get jwt (str prefix "/oauth/client/id"))}
-               client-name (assoc :name client-name)))})
-
+  (let [n (+ 1 (count prefix))
+        update-if-contains? (fn [m k f]
+                              (if (contains? m k)
+                                (update m k f)
+                                m))
+        keywordize #(map keyword %)
+        str-to-path (fn [k]
+                      (-> k ;; the key of the jwt map that starts with prefix
+                          (subs n) ;; remove the prefix
+                          (str/split #"/") ;; split on /
+                          ;; finally keywordize all elements
+                          keywordize))
+        tmp (->> jwt
+                 (map (fn [[k v]]
+                        (when (and (string? k) (str/starts-with? k prefix))
+                          [(str-to-path k) v])))
+                 (remove nil?) ;; remove key not starting by prefix
+                 (reduce (fn [acc [kl v]] (assoc-in acc kl v)) {}) ;; construct the hash-map
+                 )]
+    (-> tmp
+        (assoc-in [:user :id] (:sub jwt)) ;; :sub overwrite any :user :id
+        (update-if-contains? :scopes set) ;; and scopes should be a set, not alist
+        )))
 
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
