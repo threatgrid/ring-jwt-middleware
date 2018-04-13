@@ -438,16 +438,18 @@
   (accepted-by-scopes (map to-scope-repr required)
                       (map to-scope-repr scopes)))
 
-(defn check-scopes! [required scopes]
-  (when (and (some? required)
-             (not (accepted-by-scopes required (map to-scope-repr scopes))))
-    (log/errorf "Unauthorized access attempt: %s"
-                (pr-str
-                 {:text ":scopes params mismatch"
-                  :required-scopes required
-                  :identity-scopes scopes}))
-    (ring.util.http-response/unauthorized!
-     {:msg "You don't have the required credentials to access this route"})))
+(defn check-scopes! [required identity]
+  (let [scopes (set (:scopes identity))]
+    (when (and (some? required)
+               (not (accepted-by-scopes required (map to-scope-repr scopes))))
+      (log/errorf "Unauthorized access attempt: %s"
+                  (pr-str
+                   {:text ":scopes params mismatch"
+                    :required-scopes required
+                    :identity-scopes scopes
+                    :identity identity}))
+      (ring.util.http-response/unauthorized!
+       {:msg "You don't have the required credentials to access this route"}))))
 
 ;; If you use scopes to generate your identities
 ;; this is helpful to filter routes by scopes
@@ -461,5 +463,4 @@
              [:lets]
              into
              ['_ `(check-scopes! (set (map to-scope-repr ~authorized))
-                                 (set (get-in  ~'+compojure-api-request+
-                                               [:identity :scopes])))]))
+                                 (:identity  ~'+compojure-api-request+))]))
