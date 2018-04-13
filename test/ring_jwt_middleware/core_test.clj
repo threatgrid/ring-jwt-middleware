@@ -765,6 +765,36 @@
            (catch Exception e
              true))))
 
+(deftest unalias-scopes-test
+
+  (testing "no aliases work"
+    (= #{"foo"}
+       (sut/unalias-scopes {} #{"foo"})))
+
+  (testing "basic alias usage"
+    (= #{"foo" "x" "y"}
+       (sut/unalias-scopes
+        {"foo" ["x" "y"]
+         "bar" ["x" "z"]}
+        #{"foo"})))
+
+  (testing "references of aliases works"
+    (= #{"foo" "bar" "x" "y" "z"}
+       (sut/unalias-scopes
+        {"foo" ["x" "y" "bar"]
+         "bar" ["x" "z"]
+         "quux" ["a" "z" "t"]}
+        #{"foo"})))
+
+  (testing "aliases cycles works"
+    (= #{"foo" "bar" "x" "y" "z"}
+     (sut/unalias-scopes
+      {"foo" ["x" "y" "bar"]
+       "bar" ["x" "z" "foo"]}
+      #{"foo"})))
+
+)
+
 (deftest jwt->oauth-ids-test
   (is (= {:scopes #{"scope1" "scope2"},
           :org {:id "org-id"},
@@ -810,7 +840,17 @@
            "http://example.com/claims/org/name" "ACME Inc."
            "http://example.com/claims/oauth/client/id" "client-id"
            "http://example.com/claims/oauth/kind" "code"})))
-  )
+
+  (is (= #{"foo" "bar" "scope1" "scope3" "scope2"}
+         (:scopes (sut/jwt->oauth-ids
+                   {"foo" ["scope1" "scope2" "bar"]
+                    "bar" ["scope3" "foo"]}
+                   "http://example.com/claims"
+                   {:sub "user-id"
+                    "http://example.com/claims/scopes" ["foo"]
+                    "http://example.com/claims/org/id" "org-id"
+                    "http://example.com/claims/oauth/client/id" "client-id"})))
+      "Scope aliases should be used"))
 
 (deftest scopes-logic-test
   (is (sut/sub-list ["a" "b"] ["a"]))
@@ -823,7 +863,6 @@
                         #{:read :write}))
   (is (not (sut/match-access #{:read :write}
                              #{:write})))
-
 
   (is (sut/match-scope (sut/to-scope-repr "sub")
                        (sut/to-scope-repr "sub")))
@@ -879,4 +918,16 @@
     (is (sut/check-scopes  #{"foo/bar/baz:rw" "bar"} #{"foo" "bar"}))
     (is (sut/check-scopes  #{"foo/bar/baz:rw" "bar"} #{"foo" "bar"}))
     (is (sut/check-scopes  #{"foo/bar/baz:read" "bar"} #{"foo:read" "bar"}))
-    (is (not (sut/check-scopes  #{"foo/bar/baz:write" "bar"} #{"foo:read" "bar"})))))
+    (is (not (sut/check-scopes  #{"foo/bar/baz:write" "bar"} #{"foo:read" "bar"}))))
+  (testing "access are respected even with scope aliases"
+    (let [scope-aliases {"foo" ["scope1" "scope2" "bar"]
+                         "bar" ["scope3"]
+                         "allx" ["x" "foo"]
+                         "baz" ["x:read" "quux"]
+                         "quux" ["y" "baz"]}]
+      (is (sut/check-scopes  #{"scope1/subscope1:read"} #{"foo"} scope-aliases))
+      (is (sut/check-scopes  #{"scope2/subscope1:read"} #{"foo"} scope-aliases))
+      (is (sut/check-scopes  #{"scope3/subscope1:read"} #{"foo"} scope-aliases))
+      (is (sut/check-scopes  #{"bar"} #{"foo"} scope-aliases))
+      (is (sut/check-scopes  #{"x:read" "y/sub:write"} #{"baz"} scope-aliases))
+      (is (not (sut/check-scopes  #{"x"} #{"baz"} scope-aliases))))))

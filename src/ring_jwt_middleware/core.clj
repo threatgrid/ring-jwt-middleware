@@ -155,6 +155,20 @@
   [jwt]
   (:sub jwt))
 
+(defn unalias-scopes [dict scopes]
+  (let [new-scopes (set
+                    (mapcat
+                     (fn [s]
+                       (if (contains? dict s)
+                         ;; keeping high level scope makes
+                         ;; the algorithm cycle resistant at low cost
+                         (cons s (get dict s))
+                         [s]))
+                     scopes))]
+    (if (= new-scopes (set scopes))
+      new-scopes
+      (unalias-scopes dict new-scopes))))
+
 (defn jwt->oauth-ids
   "can be used as post-jwt-format-fn
 
@@ -198,30 +212,32 @@
               :id \"org-id\"},
       :scopes #{\"scope1\" \"scope2\"}}
   "
-  [prefix jwt]
-  (let [n (+ 1 (count prefix))
-        update-if-contains? (fn [m k f]
-                              (if (contains? m k)
-                                (update m k f)
-                                m))
-        keywordize #(map keyword %)
-        str-to-path (fn [k]
-                      (-> k ;; the key of the jwt map that starts with prefix
-                          (subs n) ;; remove the prefix
-                          (str/split #"/") ;; split on /
-                          ;; finally keywordize all elements
-                          keywordize))
-        tmp (->> jwt
-                 (map (fn [[k v]]
-                        (when (and (string? k) (str/starts-with? k prefix))
-                          [(str-to-path k) v])))
-                 (remove nil?) ;; remove key not starting by prefix
-                 (reduce (fn [acc [kl v]] (assoc-in acc kl v)) {}) ;; construct the hash-map
-                 )]
-    (-> tmp
-        (assoc-in [:user :id] (:sub jwt)) ;; :sub overwrite any :user :id
-        (update-if-contains? :scopes set) ;; and scopes should be a set, not alist
-        )))
+  ([prefix jwt]
+   (jwt->oauth-ids {} prefix jwt))
+  ([scope-aliases prefix jwt]
+   (let [n (+ 1 (count prefix))
+         update-if-contains? (fn [m k f]
+                               (if (contains? m k)
+                                 (update m k f)
+                                 m))
+         keywordize #(map keyword %)
+         str-to-path (fn [k]
+                       (-> k ;; the key of the jwt map that starts with prefix
+                           (subs n) ;; remove the prefix
+                           (str/split #"/") ;; split on /
+                           ;; finally keywordize all elements
+                           keywordize))
+         tmp (->> jwt
+                  (map (fn [[k v]]
+                         (when (and (string? k) (str/starts-with? k prefix))
+                           [(str-to-path k) v])))
+                  (remove nil?) ;; remove key not starting by prefix
+                  (reduce (fn [acc [kl v]] (assoc-in acc kl v)) {}) ;; construct the hash-map
+                  )]
+     (-> tmp
+         (assoc-in [:user :id] (:sub jwt)) ;; :sub overwrite any :user :id
+         (update-if-contains? :scopes #(unalias-scopes scope-aliases %)) ;; and scopes should be a set, not alist
+         ))))
 
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
@@ -335,8 +351,6 @@
              into
              ['_ `(check-jwt-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
 
-
-
 ;; add the :identity in the route description
 (defmethod meta/restructure-param :identity [_ identity acc]
   (let [schema  (meta/fnk-schema identity)
@@ -369,7 +383,6 @@
              [:lets]
              into
              ['_ `(check-identity-filter! ~authorized (:identity ~'+compojure-api-request+))]))
-
 
 (defn to-scope-repr
   "Transform a textual scope as an internal representation to help
@@ -408,7 +421,6 @@
   (and (match-access (:access required-scope) (:access scope))
        (sub-list (:path required-scope) (:path scope))))
 
-
 (defn accepted-by-scopes
   "scopes should be strings.
   if none of the string contains a `/` nor a `:`.
@@ -434,9 +446,11 @@
 (defn check-scopes
   "This function might be useful to be used directly instead of just relying
   on the :scope."
-  [required scopes]
-  (accepted-by-scopes (map to-scope-repr required)
-                      (map to-scope-repr scopes)))
+  ([required scopes]
+   (check-scopes required scopes {}))
+  ([required scopes scope-aliases]
+   (accepted-by-scopes (->> required (unalias-scopes scope-aliases) (map to-scope-repr))
+                       (->> scopes (unalias-scopes scope-aliases) (map to-scope-repr)))))
 
 (defn check-scopes! [required identity]
   (let [scopes (set (:scopes identity))]
