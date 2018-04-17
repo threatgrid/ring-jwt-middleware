@@ -8,7 +8,7 @@
                         ["snapshots" {:url "https://clojars.org/repo" :creds :gpg}]]
   :dependencies [[org.clojure/clojure "1.8.0"]
                  [yogsototh/clj-jwt "0.2.1"]
-                 [threatgrid/clj-momo "0.2.9"]
-                 [org.clojure/tools.logging "0.3.1"]
-                 [metosin/ring-http-response "0.8.2"]
-                 [metosin/compojure-api "1.1.9"]])
+                 [threatgrid/clj-momo "0.2.21"]
+                 [org.clojure/tools.logging "0.4.0"]
+                 [metosin/ring-http-response "0.9.0"]
+                 [metosin/compojure-api "1.1.12"]])
