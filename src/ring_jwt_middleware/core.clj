@@ -107,7 +107,7 @@
   and log the error along debug infos"
   [error-log-msg error-msg]
   (log/debug error-log-msg)
-  (log/errorf "JWT Error(s): %s" error-msg)
+  (log/warnf "JWT Error(s): %s" error-msg)
   (unauthorized error-msg))
 
 (def default-jwt-lifetime-in-sec 86400)
@@ -254,17 +254,17 @@
                                      long-lived-jwt?)]
                 (log-and-refuse (pr-str jwt)
                                 (format "(%s) %s"
-                                        (or (jwt->user-id jwt) "Unkown User ID")
+                                        (or (jwt->user-id jwt) "Unknown User ID")
                                         (str/join ", " validation-errors)))
                 (if (try (is-revoked-fn jwt)
                          (catch Exception e
-                           (log/errorf "is-revoked-fn thrown an exception for: %s"
-                                       (pr-str jwt))
+                           (log/warnf "is-revoked-fn thrown an exception for: %s"
+                                      (pr-str jwt))
                            (throw e)))
                   (log-and-refuse
                    (pr-str jwt)
                    (format "JWT revoked for %s"
-                           (or (jwt->user-id jwt) "Unkown User ID")))
+                           (or (jwt->user-id jwt) "Unknown User ID")))
                   (handler (assoc request
                                   :identity (post-jwt-format-fn jwt)
                                   :jwt jwt))))
@@ -311,11 +311,11 @@
 (defn check-jwt-filter! [required jwt]
   (when (and (some? required)
              (every? #(not (sub-hash? % jwt)) required))
-    (log/errorf "Unauthorized access attempt: %s"
-                (pr-str
-                 {:text ":jwt-filter params mismatch"
-                  :required required
-                  :identity jwt}))
+    (log/warnf "Unauthorized access attempt: %s"
+               (pr-str
+                {:text ":jwt-filter params mismatch"
+                 :required required
+                 :identity jwt}))
     (ring.util.http-response/unauthorized!
      {:msg "You don't have the required credentials to access this route"})))
 
@@ -346,11 +346,11 @@
 (defn check-identity-filter! [required identity]
   (when (and (some? required)
              (every? #(not (sub-hash? % identity)) required))
-    (log/errorf "Unauthorized access attempt: %s"
-                (pr-str
-                 {:text ":identity-filter params mismatch"
-                  :required required
-                  :identity identity}))
+    (log/warnf "Unauthorized access attempt: %s"
+               (pr-str
+                {:text ":identity-filter params mismatch"
+                 :required required
+                 :identity identity}))
     (ring.util.http-response/unauthorized!
      {:msg "You don't have the required credentials to access this route"})))
 
@@ -442,12 +442,12 @@
   (let [scopes (set (:scopes identity))]
     (when (and (some? required)
                (not (accepted-by-scopes required (map to-scope-repr scopes))))
-      (log/errorf "Unauthorized access attempt: %s"
-                  (pr-str
-                   {:text ":scopes params mismatch"
-                    :required-scopes required
-                    :identity-scopes scopes
-                    :identity identity}))
+      (log/warnf "Unauthorized access attempt: %s"
+                 (pr-str
+                  {:text ":scopes params mismatch"
+                   :required-scopes required
+                   :identity-scopes scopes
+                   :identity identity}))
       (ring.util.http-response/unauthorized!
        {:msg "You don't have the required credentials to access this route"}))))
 
