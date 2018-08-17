@@ -81,32 +81,32 @@
                             :iat 1487168050} 86400)))
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
-    (is (= '("This JWT has expired since 1s")
+    (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
            (sut/validate-jwt decoded-jwt-2 86400))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 15 14 10 0))]
-    (is (= '("This JWT has expired since 1h")
+    (is (= '("This JWT has expired since 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
            (sut/validate-jwt decoded-jwt-2 86400))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 17 15 14 10 0))]
-    (is (= '("This JWT has expired since 1 day 1h")
+    (is (= '("This JWT has expired since 1 day 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
            (sut/validate-jwt decoded-jwt-2 86400))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 18 15 14 10 0))]
-    (is (= '("This JWT has expired since 2 days 1h")
+    (is (= '("This JWT has expired since 2 days 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
            (sut/validate-jwt decoded-jwt-2 86400))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2019 04 03 8 24 5 123))]
-    (is (= '("This JWT has expired since 2 years 45 days 18h 9min 55s")
+    (is (= '("This JWT has expired since 2 years 45 days 18h 9min 55s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
            (sut/validate-jwt decoded-jwt-2 86400))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
-    (is (= '("This JWT has expired since 1s")
+    (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
            (sut/validate-jwt decoded-jwt-2 86400 nil (constantly false)))))
 
   (with-redefs
