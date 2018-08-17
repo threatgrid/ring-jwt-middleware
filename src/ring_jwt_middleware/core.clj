@@ -93,8 +93,9 @@
                   (hr-duration (* 1000 before-secs)))
 
           (pos? expired-secs)
-          (format "This JWT has expired since %s"
-                  (hr-duration (* 1000 expired-secs)))
+          (format "This JWT has expired since %s (we don't allow JWT older than %s; we only checked creation date and not maximal expiration date)"
+                  (hr-duration (* 1000 expired-secs))
+                  (hr-duration (* 1000 jwt-max-lifetime-in-sec)))
 
           (pos? expired-lifetime-secs)
           (format "This JWT max lifetime has expired since %s"
