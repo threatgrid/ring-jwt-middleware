@@ -317,8 +317,9 @@
                 {:text ":jwt-filter params mismatch"
                  :required required
                  :identity jwt}))
-    (ring.util.http-response/unauthorized!
-     {:msg "You don't have the required credentials to access this route"})))
+    (ring.util.http-response/forbidden!
+     {:error :insufficient_access
+      :error_msg "You don't have the required credentials to access this route"})))
 
 ;;
 ;; add the :jwt-filter
@@ -352,8 +353,9 @@
                 {:text ":identity-filter params mismatch"
                  :required required
                  :identity identity}))
-    (ring.util.http-response/unauthorized!
-     {:msg "You don't have the required credentials to access this route"})))
+    (ring.util.http-response/forbidden!
+     {:error :insufficient_access
+      :error_msg "You don't have the required credentials to access this route"})))
 
 ;;
 ;; add the :identity-filter
@@ -393,8 +395,9 @@
                "write" #{:write}
                "rw"    #{:read :write}
                nil     #{:read :write}
-               (ring.util.http-response/unauthorized!
-                {:msg "bad access part in the scope, must be read or nothing."}))}))
+               (ring.util.http-response/forbidden!
+                {:error :missing_scope
+                 :error_msg "bad access part in the scope, must be read or nothing."}))}))
 (defn sub-list
   [req-list scope-path-list]
   (let [n (count scope-path-list)]

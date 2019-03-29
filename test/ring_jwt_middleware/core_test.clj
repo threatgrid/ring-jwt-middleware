@@ -399,8 +399,9 @@
                            :jwt-params {}
                            :jwt decoded-jwt-1})]
 
-      (is (= 401 (:status response)))
-      (is (= {:msg "You don't have the required credentials to access this route"}
+      (is (= 403 (:status response)))
+      (is (= {:error :insufficient_access
+              :error_msg "You don't have the required credentials to access this route"}
              (read-string (slurp (:body response)))))))
 
   (testing "identity-filter"
@@ -457,8 +458,9 @@
                            :identity {:user {:id "user-id"}
                                       :org {:id "org-id"}
                                       :scopes ["all"]}})]
-      (is (= 401 (:status response)))
-      (is (= {:msg "You don't have the required credentials to access this route"}
+      (is (= 403 (:status response)))
+      (is (= {:error :insufficient_access
+              :error_msg "You don't have the required credentials to access this route"}
              (read-string (slurp (:body response))))))
 
     (let [api-3
@@ -520,7 +522,8 @@
                                                :org {:id "org-id"}
                                                :scopes ["scope1" "root/sub1/sub2:read"]}}))))))
 
-      (is (= {:msg "You don't have the required credentials to access this route"}
+      (is (= {:error :missing_scope
+              :error_msg "You don't have the required credentials to access this route"}
              (read-string
               (slurp (:body (api-1 {:request-method :post
                                     :uri "/test/test"
@@ -543,7 +546,8 @@
                                                :scopes ["scope1" "root"]}})))))
           "User with scope1 and root scopes should have access")
 
-      (is (= {:msg "You don't have the required credentials to access this route"}
+      (is (= {:error :missing_scope
+              :error_msg "You don't have the required credentials to access this route"}
              (read-string
               (slurp (:body (api-1 {:request-method :post
                                     :uri "/test/test"
@@ -580,8 +584,9 @@
                            :identity {:user {:id "user-id"}
                                       :org {:id "org-id"}
                                       :scopes ["all"]}})]
-      (is (= 401 (:status response)))
-      (is (= {:msg "You don't have the required credentials to access this route"}
+      (is (= 403 (:status response)))
+      (is (= {:error :missing_scope
+              :error_msg "You don't have the required credentials to access this route"}
              (read-string (slurp (:body response))))))
 
     (let [api-3
@@ -622,8 +627,9 @@
       (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all" "foo"]}
              (read-string (slurp (:body response-1)))))
 
-      (is (= 401 (:status response-2)))
-      (is (= {:msg "You don't have the required credentials to access this route"}
+      (is (= 403 (:status response-2)))
+      (is (= {:error :missing_scope
+              :error_msg "You don't have the required credentials to access this route"}
              (read-string (slurp (:body response-2)))))))
 
   )
