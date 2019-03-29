@@ -449,8 +449,9 @@
                    :required-scopes required
                    :identity-scopes scopes
                    :identity identity}))
-      (ring.util.http-response/unauthorized!
-       {:msg "You don't have the required credentials to access this route"}))))
+      (ring.util.http-response/forbidden!
+       {:error :missing_scope
+        :error_msg "You don't have the required credentials to access this route"}))))
 
 ;; If you use scopes to generate your identities
 ;; this is helpful to filter routes by scopes
