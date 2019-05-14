@@ -1,7 +1,7 @@
 (ns ring-jwt-middleware.core-test
   (:require [clj-jwt.key :refer [public-key]]
             [clj-momo.lib.clj-time.core :as time]
-            [clojure.test :refer [deftest are is testing use-fixtures]]
+            [clojure.test :refer [deftest are is testing use-fixtures join-fixtures]]
             [compojure.api
              [api :refer [api]]
              [sweet :refer [context POST]]]
@@ -16,6 +16,13 @@
       (time/date-time 2017 06 30 9 35 2))]
     (f)))
 
+
+(defn with-fixed-uuid
+  [f]
+  (with-redefs
+    [sut/gen-uuid (constantly "00000000-0000-0000-0000-000000000000")]
+    (f)))
+
 (defn make-jwt
   "a useful one liner for easy testing"
   [input-map]
@@ -28,7 +35,8 @@
         "clojure"))
       clj-jwt.core/to-str))
 
-(use-fixtures :once with-fixed-time)
+(use-fixtures :once (join-fixtures [with-fixed-time
+                                    with-fixed-uuid]))
 
 (def input-jwt-token-1
   "a map for creating a sample token with clj-jwt"
@@ -397,12 +405,17 @@
                                      "content-type" "application/edn"}
                            :body-params {:lorem "ipsum"}
                            :jwt-params {}
-                           :jwt decoded-jwt-1})]
+                           :jwt decoded-jwt-1})
+          parsed-body (read-string (slurp (:body response)))]
 
       (is (= 403 (:status response)))
       (is (= {:error :insufficient_access
-              :error_msg "You don't have the required credentials to access this route"}
-             (read-string (slurp (:body response)))))))
+              :error_description "You don't have the required credentials to access this route"}
+             (select-keys parsed-body [:error :error_description])))
+      (is (uuid?
+           (read-string
+            (str "#uuid \"" (:trace_id parsed-body) "\"")))
+          "Error should contain an unique UUID to help trace back in logs")))
 
   (testing "identity-filter"
     (let [api-1
@@ -457,11 +470,12 @@
                            :body-params {:lorem "ipsum"}
                            :identity {:user {:id "user-id"}
                                       :org {:id "org-id"}
-                                      :scopes ["all"]}})]
+                                      :scopes ["all"]}})
+          parsed-body (read-string (slurp (:body response)))]
       (is (= 403 (:status response)))
       (is (= {:error :insufficient_access
-              :error_msg "You don't have the required credentials to access this route"}
-             (read-string (slurp (:body response))))))
+              :error_description "You don't have the required credentials to access this route"}
+             (select-keys parsed-body [:error :error_description]))))
 
     (let [api-3
           (api {}
@@ -523,7 +537,8 @@
                                                :scopes ["scope1" "root/sub1/sub2:read"]}}))))))
 
       (is (= {:error :missing_scope
-              :error_msg "You don't have the required credentials to access this route"}
+              :error_description "You don't have the required credentials to access this route"
+              :trace_id "00000000-0000-0000-0000-000000000000"}
              (read-string
               (slurp (:body (api-1 {:request-method :post
                                     :uri "/test/test"
@@ -547,7 +562,8 @@
           "User with scope1 and root scopes should have access")
 
       (is (= {:error :missing_scope
-              :error_msg "You don't have the required credentials to access this route"}
+              :error_description "You don't have the required credentials to access this route"
+              :trace_id "00000000-0000-0000-0000-000000000000"}
              (read-string
               (slurp (:body (api-1 {:request-method :post
                                     :uri "/test/test"
@@ -586,7 +602,8 @@
                                       :scopes ["all"]}})]
       (is (= 403 (:status response)))
       (is (= {:error :missing_scope
-              :error_msg "You don't have the required credentials to access this route"}
+              :error_description "You don't have the required credentials to access this route"
+              :trace_id "00000000-0000-0000-0000-000000000000"}
              (read-string (slurp (:body response))))))
 
     (let [api-3
@@ -629,10 +646,9 @@
 
       (is (= 403 (:status response-2)))
       (is (= {:error :missing_scope
-              :error_msg "You don't have the required credentials to access this route"}
-             (read-string (slurp (:body response-2)))))))
-
-  )
+              :error_description "You don't have the required credentials to access this route"
+              :trace_id "00000000-0000-0000-0000-000000000000"}
+             (read-string (slurp (:body response-2))))))))
 
 (deftest sub-hash-test
   (testing "positive sub-hash?"
