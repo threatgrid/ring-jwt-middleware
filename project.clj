@@ -6,7 +6,7 @@
   :url "http://github.com/threatgrid/ring-jwt-middleware"
   :deploy-repositories [["releases" {:url "https://clojars.org/repo" :creds :gpg}]
                         ["snapshots" {:url "https://clojars.org/repo" :creds :gpg}]]
-  :dependencies [[org.clojure/clojure "1.8.0"]
+  :dependencies [[org.clojure/clojure "1.9.0"]
                  [yogsototh/clj-jwt "0.2.1"]
                  [threatgrid/clj-momo "0.2.21"]
                  [org.clojure/tools.logging "0.4.0"]

@@ -13,6 +13,9 @@
             [compojure.api.meta :as meta]
             [ring.util.http-response :refer [unauthorized]]))
 
+(defn gen-uuid []
+  (str (java.util.UUID/randomUUID)))
+
 (defn get-jwt
   "get the JWT from a ring request"
   [req]
@@ -319,7 +322,8 @@
                  :identity jwt}))
     (ring.util.http-response/forbidden!
      {:error :insufficient_access
-      :error_msg "You don't have the required credentials to access this route"})))
+      :error_description "You don't have the required credentials to access this route"
+      :trace_id (gen-uuid)})))
 
 ;;
 ;; add the :jwt-filter
@@ -355,7 +359,8 @@
                  :identity identity}))
     (ring.util.http-response/forbidden!
      {:error :insufficient_access
-      :error_msg "You don't have the required credentials to access this route"})))
+      :error_description "You don't have the required credentials to access this route"
+      :trace_id (gen-uuid)})))
 
 ;;
 ;; add the :identity-filter
@@ -397,7 +402,8 @@
                nil     #{:read :write}
                (ring.util.http-response/forbidden!
                 {:error :missing_scope
-                 :error_msg "bad access part in the scope, must be read or nothing."}))}))
+                 :error_description "bad access part in the scope, must be read or nothing."
+                 :trace_id (gen-uuid)}))}))
 (defn sub-list
   [req-list scope-path-list]
   (let [n (count scope-path-list)]
@@ -454,7 +460,8 @@
                    :identity identity}))
       (ring.util.http-response/forbidden!
        {:error :missing_scope
-        :error_msg "You don't have the required credentials to access this route"}))))
+        :error_description "You don't have the required credentials to access this route"
+        :trace_id (gen-uuid)}))))
 
 ;; If you use scopes to generate your identities
 ;; this is helpful to filter routes by scopes
