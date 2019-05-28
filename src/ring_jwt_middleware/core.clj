@@ -112,13 +112,14 @@
 (defn default-error-handler
   "Return an `unauthorized` HTTP response
   and log the error along debug infos"
-  [log-fn infos error-msg]
-  (log-fn error-msg
-          (assoc infos
-                 :level :info
-                 :error :jwt_check_error
-                 :error_description error-msg))
-  (unauthorized error-msg))
+  [log-fn
+   {:keys [error_description]
+    :as infos}]
+  (log-fn error_description
+          (into {:level :info
+                 :error :jwt_check_error}
+                infos))
+  (unauthorized (or error_description "JWT check failure")))
 
 (def default-jwt-lifetime-in-sec 86400)
 
@@ -261,7 +262,7 @@
                              "is-revoked-fn is not a function! no-revocation-strategy is used."
                              {:level :error})
                             no-revocation-strategy))
-        handle-error (or error-handler default-error-handler)]
+        handle-error (or error-handler (partial default-error-handler structured-log-fn))]
     (fn [handler]
       (let [no-jwt-fn (no-jwt-handler handler)]
         (fn [request]
