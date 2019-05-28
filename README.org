@@ -40,7 +40,6 @@ wrap your routes with it:
 | =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                            |
 | =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy  |
 | =:post-jwt-format-fn=      | a fn that given a JWT generate an identity information                                 | jwt->user-id (the "sub" claim) |
-| =:long-lived-jwt?=         | a fn that given a JWT return true if we should check the max-lifetime false otherwise  | jwt->user-id (the "sub" claim) |
 
 If the request contains a valid JWT auth header, the JWT is merged with the ring
 request under a =:jwt= key as well with a =:identiy= key.
@@ -83,30 +82,6 @@ here is a sample token:
  :email "foo@bar.com"
  "http://example.com/claim/user/name" "john doe"}
 #+END_SRC
-
-*** Compojure-api support
-
-You can check the JWT from the req with schemas
-and destructure it like the rest of the HTTP query,
-use =:jwt-params=.
-
-#+BEGIN_SRC clojure
-(POST "/test" []
-      :return {:foo s/Str
-               :user_id s/Str}
-               :body-params  [{lorem :- s/Str ""}]
-               :summary "Does nothing"
-               :jwt-params [foo :- s/Str
-                            user_id :- s/Str
-                            exp :- s/Num
-                            {boolean_field :- s/Bool "false"}]
-  {:status 200
-   :body {:foo foo
-          :user_id user_id}})
-#+END_SRC
-
-You could also directly use =:identity= to match the result of the
-=post-jwt-format-fn= applied to the decoded JWT.
 
 ** Generating Certs and a Token
 

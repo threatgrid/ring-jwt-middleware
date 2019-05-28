@@ -3,13 +3,13 @@
              [core :refer :all]
              [key :refer [public-key]]
              [json-key-fn :as jkf]]
+            [clojure.tools.logging :as log]
             [clj-momo.lib.clj-time
              [coerce :as time-coerce]
              [core :as time]]
             [clojure
              [set :as set]
              [string :as str]]
-            [clojure.tools.logging :as log]
             [compojure.api.meta :as meta]
             [ring.util.http-response :refer [unauthorized]]))
 
@@ -26,15 +26,23 @@
 
 (defn decode
   "Given a JWT return an Auth hash-map"
-  [token pubkey]
+  [token pubkey log-fn]
   (try
     (let [jwt (str->jwt token)]
       (if (verify jwt :RS256 pubkey)
         (:claims jwt)
-        (do (log/warn "Invalid signature")
+        (do (log-fn "Invalid signature"
+                    {:level :warn
+                     :jwt jwt
+                     :token token})
             nil)))
     (catch Exception e
-      (log/warn "JWT decode failed:" (.getMessage e)) nil)))
+      (log-fn "JWT decode failed:"
+              {:exception_message (.getMessage e)
+               :token token
+               :level :warn}
+              )
+      nil)))
 
 (defn hr-duration
   "Given a duration in ms,
@@ -77,17 +85,12 @@
 
 (defn check-jwt-expiry
   "Return a string if JWT expiration check fails, nil otherwise"
-  [jwt
-   jwt-max-lifetime-in-sec
-   long-lived-jwt?]
+  [jwt jwt-max-lifetime-in-sec]
   (let [required-fields #{:nbf :exp :iat}
         jwt-keys (set (keys jwt))]
     (if (set/subset? required-fields jwt-keys)
       (let [now (time-coerce/to-epoch (time/now))
-            expired-secs (if (long-lived-jwt? jwt)
-                           -1
-                           (- now (+ (:iat jwt 0)
-                                     jwt-max-lifetime-in-sec)))
+            expired-secs (- now (+ (:iat jwt 0) jwt-max-lifetime-in-sec))
             before-secs (- (:nbf jwt) now)
             expired-lifetime-secs (- now (:exp jwt 0))]
         (cond
@@ -106,19 +109,20 @@
       (format "This JWT doesn't contain the following fields %s"
               (pr-str (set/difference required-fields jwt-keys))))))
 
-(defn log-and-refuse
+(defn default-error-handler
   "Return an `unauthorized` HTTP response
   and log the error along debug infos"
-  [error-log-msg error-msg]
-  (log/debug error-log-msg)
-  (log/warnf "JWT Error(s): %s" error-msg)
+  [log-fn infos error-msg]
+  (log-fn error-msg
+          (assoc infos
+                 :level :info
+                 :error :jwt_check_error
+                 :error_description error-msg))
   (unauthorized error-msg))
 
 (def default-jwt-lifetime-in-sec 86400)
 
 (def no-revocation-strategy (constantly false))
-
-(def no-long-lived-jwt (constantly false))
 
 (defn validate-jwt
   "Run both expiration and user checks,
@@ -126,24 +130,24 @@
   ([jwt
     jwt-max-lifetime-in-sec
     jwt-check-fn
-    long-lived-jwt?]
+    log-fn]
    (let [exp-vals [(check-jwt-expiry jwt
                                      (or jwt-max-lifetime-in-sec
-                                         default-jwt-lifetime-in-sec)
-                                     long-lived-jwt?)]
+                                         default-jwt-lifetime-in-sec))]
          checks (if (fn? jwt-check-fn)
                   (or (try (seq (jwt-check-fn jwt))
                            (catch Exception e
-                             (log/errorf "jwt-check-fn thrown an exception on: %s"
-                                         (pr-str jwt))
+                             (log-fn "jwt-check-fn thrown an exception on"
+                                     {:level :error
+                                      :jwt jwt})
                              (throw e)))
                       [])
                   [])]
      (seq (remove nil?
                   (concat checks exp-vals)))))
 
-  ([jwt jwt-max-lifetime-in-sec]
-   (validate-jwt jwt jwt-max-lifetime-in-sec nil no-long-lived-jwt)))
+  ([jwt jwt-max-lifetime-in-sec log-fn]
+   (validate-jwt jwt jwt-max-lifetime-in-sec nil log-fn)))
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
@@ -227,6 +231,14 @@
         (update-if-contains? :scopes set) ;; and scopes should be a set, not alist
         )))
 
+(defn default-structured-log
+  [msg infos]
+  (let [level (or (:level infos) :info)
+        txt (format "JWT: %s\n%s"
+                    msg
+                    (pr-str infos))]
+    (log/log level txt)))
+
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
   [{:keys [pubkey-path
@@ -235,244 +247,52 @@
            jwt-max-lifetime-in-sec
            post-jwt-format-fn
            no-jwt-handler
-           long-lived-jwt?]
+           error-handler
+           structured-log-fn]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
          post-jwt-format-fn jwt->user-id
          no-jwt-handler forbid-no-jwt-header-strategy
-         long-lived-jwt? no-long-lived-jwt}}]
+         structured-log-fn default-structured-log}}]
   (let [pubkey (public-key pubkey-path)
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
-                        (do (log/warn "is-revoked-fn is not a function! no-revocation-strategy is used.")
-                            no-revocation-strategy))]
+                        (do (structured-log-fn
+                             "is-revoked-fn is not a function! no-revocation-strategy is used."
+                             {:level :error})
+                            no-revocation-strategy))
+        handle-error (or error-handler default-error-handler)]
     (fn [handler]
       (let [no-jwt-fn (no-jwt-handler handler)]
         (fn [request]
           (if-let [raw-jwt (get-jwt request)]
-            (if-let [jwt (decode raw-jwt pubkey)]
+            (if-let [jwt (decode raw-jwt pubkey structured-log-fn)]
               (if-let [validation-errors
                        (validate-jwt jwt
                                      jwt-max-lifetime-in-sec
                                      jwt-check-fn
-                                     long-lived-jwt?)]
-                (log-and-refuse (pr-str jwt)
-                                (format "(%s) %s"
-                                        (or (jwt->user-id jwt) "Unknown User ID")
-                                        (str/join ", " validation-errors)))
+                                     structured-log-fn)]
+                (handle-error {:jwt jwt
+                               :error :jwt_validation_error
+                               :errors validation-errors
+                               :error_description (format "(%s) %s"
+                                                          (or (jwt->user-id jwt) "Unknown User ID")
+                                                          (str/join ", " validation-errors))})
                 (if (try (is-revoked-fn jwt)
                          (catch Exception e
-                           (log/warnf "is-revoked-fn thrown an exception for: %s"
-                                      (pr-str jwt))
+                           (structured-log-fn "is-revoked-fn thrown an exception for"
+                                              {:level :error
+                                               :jwt jwt})
                            (throw e)))
-                  (log-and-refuse
-                   (pr-str jwt)
-                   (format "JWT revoked for %s"
-                           (or (jwt->user-id jwt) "Unknown User ID")))
+                  (handle-error {:jwt jwt
+                                 :error :jwt_revoked
+                                 :error_description
+                                 (format "JWT revoked for %s"
+                                         (or (jwt->user-id jwt) "Unknown User ID"))})
                   (handler (assoc request
                                   :identity (post-jwt-format-fn jwt)
                                   :jwt jwt))))
-              (log-and-refuse (str "Bearer:" (pr-str raw-jwt))
-                              "Invalid Authorization Header (couldn't decode the JWT)"))
+              (handle-error {:authorization-header (str "Bearer:" raw-jwt)
+                             :error_description
+                             "Invalid Authorization Header (couldn't decode the JWT)"}))
             (no-jwt-fn request)))))))
-
-;; compojure-api restructuring
-;; add the :jwt-params in the route description
-(defmethod meta/restructure-param :jwt-params [_ jwt-params acc]
-  (let [schema  (meta/fnk-schema jwt-params)
-        new-letks [jwt-params (meta/src-coerce! schema :jwt :string)]]
-    (update-in acc [:letks] into new-letks)))
-
-(defn sub-hash?
-  "Return true if the 1st hashmap is a sub hashmap of the second.
-
-  Take into account that if some value is a collection then
-  only check if the corresponding value in the first hashmap
-  is a sub-collection.
-
-    ~~~clojure
-    > (sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3})
-    true
-    > (sub-hash? {:foo 1 :bar #{2 3}} {:foo 1 :bar #{1 2 3 4} :baz 3})
-    true
-    > (sub-hash? {:foo 1 :bar 2} {:foo 1})
-    false
-    > (sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 3})
-    false
-    ~~~
-  "
-  [m1 m2]
-  (->> m1
-       (map (fn [[k v1]]
-              (let [v2 (get m2 k)]
-                (if (map? v1)
-                  (sub-hash? v1 v2)
-                  (if (and (coll? v1) (coll? v2))
-                    (set/subset? (set v1) (set v2))
-                    (= v1 v2))))))
-       (every? true?)))
-
-(defn check-jwt-filter! [required jwt]
-  (when (and (some? required)
-             (every? #(not (sub-hash? % jwt)) required))
-    (log/warnf "Unauthorized access attempt: %s"
-               (pr-str
-                {:text ":jwt-filter params mismatch"
-                 :required required
-                 :identity jwt}))
-    (ring.util.http-response/forbidden!
-     {:error :insufficient_access
-      :error_description "You don't have the required credentials to access this route"
-      :trace_id (gen-uuid)})))
-
-;;
-;; add the :jwt-filter
-;; to compojure api params
-;; it should contains a set of hash-maps
-;; example:
-;;
-;; (POST "/foo" [] :jwt-filter #{{:foo "bar"} {:foo "baz"}})
-;;
-;; Will be accepted only for people having a jwt such that the value
-;; for :foo is either "bar" or "baz"
-(defmethod compojure.api.meta/restructure-param :jwt-filter [_ authorized acc]
-  (update-in acc
-             [:lets]
-             into
-             ['_ `(check-jwt-filter! ~authorized (:jwt ~'+compojure-api-request+))]))
-
-
-
-;; add the :identity in the route description
-(defmethod meta/restructure-param :identity [_ identity acc]
-  (let [schema  (meta/fnk-schema identity)
-        new-letks [identity (meta/src-coerce! schema :identity :string)]]
-    (update-in acc [:letks] into new-letks)))
-
-(defn check-identity-filter! [required identity]
-  (when (and (some? required)
-             (every? #(not (sub-hash? % identity)) required))
-    (log/warnf "Unauthorized access attempt: %s"
-               (pr-str
-                {:text ":identity-filter params mismatch"
-                 :required required
-                 :identity identity}))
-    (ring.util.http-response/forbidden!
-     {:error :insufficient_access
-      :error_description "You don't have the required credentials to access this route"
-      :trace_id (gen-uuid)})))
-
-;;
-;; add the :identity-filter
-;; to compojure api params
-;; it should contains a set of hash-maps
-;; example:
-;;
-;; (POST "/foo" [] :identity-filter #{{:foo "bar"} {:foo "baz"}})
-;;
-;; Will be accepted only for people having a jwt such that the value
-;; for :foo is either "bar" or "baz"
-(defmethod compojure.api.meta/restructure-param :identity-filter [_ authorized acc]
-  (update-in acc
-             [:lets]
-             into
-             ['_ `(check-identity-filter! ~authorized (:identity ~'+compojure-api-request+))]))
-
-
-(defn to-scope-repr
-  "Transform a textual scope as an internal representation to help
-  check rules typically
-
-  > \"foo\"
-  {:path [\"foo\"]
-   :access #{:read :write}}
-
-  > \"foo/bar/baz:write\"
-  {:path [\"foo\" \"bar\" \"baz\"]
-   :access #{:write}}
-
-  "
-  [txt]
-  (let [[path access] (str/split txt #":")]
-    {:path (str/split path #"/")
-     :access (case access
-               "read"  #{:read}
-               "write" #{:write}
-               "rw"    #{:read :write}
-               nil     #{:read :write}
-               (ring.util.http-response/forbidden!
-                {:error :missing_scope
-                 :error_description "bad access part in the scope, must be read or nothing."
-                 :trace_id (gen-uuid)}))}))
-(defn sub-list
-  [req-list scope-path-list]
-  (let [n (count scope-path-list)]
-    (= (take n req-list) scope-path-list)))
-
-(defn match-access
-  [required-access access]
-  (clojure.set/subset? required-access access))
-
-(defn match-scope
-  [required-scope scope]
-  (and (match-access (:access required-scope) (:access scope))
-       (sub-list (:path required-scope) (:path scope))))
-
-
-(defn accepted-by-scopes
-  "scopes should be strings.
-  if none of the string contains a `/` nor a `:`.
-  It works as is a subset of.
-
-  :scopes #{\"foo\" \"bar\"}
-  only people with scopes which are super sets of
-  #{\"foo\" \"bar\"}
-  will be allowed to use the route.
-
-  scopes are considered as path with read/write access.
-  so \"foo/bar/baz:read\" is a sub-scope of \"foo\"
-  and of \"foo:read\".
-
-  So the more precise rule of access is.
-  All mandatory scopes must be sub-scopes of at least one user scopes.
-  "
-  [required scopes]
-  (every? (fn [req-scope]
-            (some #(match-scope req-scope %) scopes))
-          required))
-
-(defn check-scopes
-  "This function might be useful to be used directly instead of just relying
-  on the :scope."
-  [required scopes]
-  (accepted-by-scopes (map to-scope-repr required)
-                      (map to-scope-repr scopes)))
-
-(defn check-scopes! [required identity]
-  (let [scopes (set (:scopes identity))]
-    (when (and (some? required)
-               (not (accepted-by-scopes required (map to-scope-repr scopes))))
-      (log/warnf "Unauthorized access attempt: %s"
-                 (pr-str
-                  {:text ":scopes params mismatch"
-                   :required-scopes required
-                   :identity-scopes scopes
-                   :identity identity}))
-      (ring.util.http-response/forbidden!
-       {:error :missing_scope
-        :error_description "You don't have the required credentials to access this route"
-        :trace_id (gen-uuid)}))))
-
-;; If you use scopes to generate your identities
-;; this is helpful to filter routes by scopes
-;;
-;; (POST "/foo" [] :scopes #{"admin"} ...)
-;;
-;; (POST "/foo" [] :scopes #{"admin" "foo"}
-;;   users must have admin and foo scopes)
-(defmethod compojure.api.meta/restructure-param :scopes [_ authorized acc]
-  (update-in acc
-             [:lets]
-             into
-             ['_ `(check-scopes! (set (map to-scope-repr ~authorized))
-                                 (:identity  ~'+compojure-api-request+))]))

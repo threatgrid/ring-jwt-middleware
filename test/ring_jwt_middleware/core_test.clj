@@ -2,9 +2,6 @@
   (:require [clj-jwt.key :refer [public-key]]
             [clj-momo.lib.clj-time.core :as time]
             [clojure.test :refer [deftest are is testing use-fixtures join-fixtures]]
-            [compojure.api
-             [api :refer [api]]
-             [sweet :refer [context POST]]]
             [ring-jwt-middleware.core :as sut]
             [schema.core :as s]))
 
@@ -35,8 +32,26 @@
         "clojure"))
       clj-jwt.core/to-str))
 
+
+
+(def log-events (atom []))
+
+(defn test-log-fn
+  [msg infos]
+  (swap! log-events #(conj % {:msg msg :infos infos})))
+
+(defn reset-log-events
+  []
+  (reset! log-events []))
+
+(defn with-clean-event-logs [f]
+  (do (reset-log-events)
+      (f)))
+
 (use-fixtures :once (join-fixtures [with-fixed-time
                                     with-fixed-uuid]))
+
+(use-fixtures :each with-clean-event-logs)
 
 (def input-jwt-token-1
   "a map for creating a sample token with clj-jwt"
@@ -75,52 +90,84 @@
 (deftest decode-test
   (is (= decoded-jwt-1
          (sut/decode jwt-token-1
-                     (public-key "resources/cert/ring-jwt-middleware.pub"))))
+                     (public-key "resources/cert/ring-jwt-middleware.pub")
+                     test-log-fn)))
+  (is (= [] @log-events))
   (is (nil?
        (sut/decode jwt-signed-with-wrong-algorithm
-                   (public-key "resources/cert/ring-jwt-middleware.pub")))))
+                   (public-key "resources/cert/ring-jwt-middleware.pub")
+                   test-log-fn)))
+
+  (is (= "Invalid signature" (:msg (first @log-events))))
+  (is (= :warn (:level (:infos (first @log-events)))))
+  (is (= {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+          :exp 1499419023
+          :iat 1498814223
+          :nbf 1498813923
+          :sub "foo@bar.com"
+          :user-identifier "foo@bar.com"
+          :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+          :foo "bar"}
+         (get-in (first @log-events) [:infos :jwt :claims]))))
 
 (deftest validate-errors-test
-  (is (nil? (sut/validate-jwt decoded-jwt-1 86400)))
+  (is (nil? (sut/validate-jwt decoded-jwt-1 86400 test-log-fn)))
   (is (= '("This JWT doesn't contain the following fields #{:exp :nbf :iat}")
-         (sut/validate-jwt {} 86400)))
+         (sut/validate-jwt {} 86400 test-log-fn)))
   (is (= '("This JWT doesn't contain the following fields #{:exp :nbf}")
          (sut/validate-jwt {:user-identifier "foo@bar.com"
-                            :iat 1487168050} 86400)))
+                            :iat 1487168050} 86400 test-log-fn)))
+  (testing "check-fn fail"
+    (is (= "check-fn fail test"
+           (try
+             (sut/validate-jwt decoded-jwt-1
+                               86400
+                               (fn [jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
+                               test-log-fn)
+             (catch Exception e (.getMessage e)))))
+    (is (= [{:msg "jwt-check-fn thrown an exception on",
+             :infos
+             {:level :error,
+              :jwt
+              {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
+               :exp 1499419023,
+               :iat 1498814223,
+               :nbf 1498813923,
+               :sub "foo@bar.com",
+               :user-identifier "foo@bar.com",
+               :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
+               :foo "bar"}}}]
+           @log-events))
+    (reset-log-events))
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
     (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400))))
+           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 15 14 10 0))]
     (is (= '("This JWT has expired since 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400))))
+           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 17 15 14 10 0))]
     (is (= '("This JWT has expired since 1 day 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400))))
+           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 18 15 14 10 0))]
     (is (= '("This JWT has expired since 2 days 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400))))
+           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2019 04 03 8 24 5 123))]
     (is (= '("This JWT has expired since 2 years 45 days 18h 9min 55s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400))))
+           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
     (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400 nil (constantly false)))))
-
-  (with-redefs
-    [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
-    (is (nil?
-         (sut/validate-jwt decoded-jwt-2 86400 nil (constantly true))))))
+           (sut/validate-jwt decoded-jwt-2 86400 nil test-log-fn)))))
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
@@ -282,510 +329,6 @@
              (with-redefs [time/now (constantly (time/date-time 2018 07 1 9 17 4))]
                (:status (ring-fn-2 req))))))))
 
-(deftest compojure-api-restructuring-test
-  (testing "jwt-params"
-    (let [api-1
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:foo s/Str
-                                       :user_id s/Str}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :jwt-params [foo :- s/Str
-                                           user_id :- s/Str
-                                           exp :- s/Num
-                                           {boolean_field
-                                            :- s/Bool "false"}]
-                              {:status 200
-                               :body {:foo foo
-                                      :user_id user_id}})))]
-
-      (is (= {:foo "bar",
-              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :jwt-params {}
-                                    :jwt decoded-jwt-1}))))))
-
-      (is (= {:errors
-              {:boolean_field
-               "(not (instance? java.lang.Boolean \"not a boolean\"))"}}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :jwt-params {}
-                                    :jwt (assoc decoded-jwt-1
-                                                "boolean_field"
-                                                "not a boolean")}))))))))
-  (testing "identity"
-    (let [api-1
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:user-id s/Str
-                                       :org-id s/Str
-                                       :scopes [s/Str]}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :identity [user :- {:id s/Str}
-                                         org :- {:id s/Str}
-                                         scopes :-  [s/Str]]
-                              {:status 200
-                               :body {:user-id (:id user)
-                                      :org-id (:id org)
-                                      :scopes scopes}})))]
-
-      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all"]}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :identity {:user {:id "user-id"}
-                                               :org {:id "org-id"}
-                                               :scopes ["all"]}}))))))))
-  (testing "jwt-filter"
-    (let [api-1
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:foo s/Str
-                                       :user_id s/Str}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :jwt-params [foo :- s/Str
-                                           user_id :- s/Str
-                                           exp :- s/Num
-                                           {boolean_field
-                                            :- s/Bool "false"}]
-                              :jwt-filter #{{:foo "bar"}}
-                              {:status 200
-                               :body {:foo foo
-                                      :user_id user_id}})))]
-
-      (is (= {:foo "bar",
-              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :jwt-params {}
-                                    :jwt decoded-jwt-1})))))))
-    (let [api-2
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:foo s/Str
-                                       :user_id s/Str}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :jwt-params [foo :- s/Str
-                                           user_id :- s/Str
-                                           exp :- s/Num
-                                           {boolean_field
-                                            :- s/Bool "false"}]
-                              :jwt-filter #{{:foo "foo"}}
-                              {:status 200
-                               :body {:foo foo
-                                      :user_id user_id}})))
-          response (api-2 {:request-method :post
-                           :uri "/test/test"
-                           :headers {"accept" "application/edn"
-                                     "content-type" "application/edn"}
-                           :body-params {:lorem "ipsum"}
-                           :jwt-params {}
-                           :jwt decoded-jwt-1})
-          parsed-body (read-string (slurp (:body response)))]
-
-      (is (= 403 (:status response)))
-      (is (= {:error :insufficient_access
-              :error_description "You don't have the required credentials to access this route"}
-             (select-keys parsed-body [:error :error_description])))
-      (is (uuid?
-           (read-string
-            (str "#uuid \"" (:trace_id parsed-body) "\"")))
-          "Error should contain an unique UUID to help trace back in logs")))
-
-  (testing "identity-filter"
-    (let [api-1
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:user-id s/Str
-                                       :org-id s/Str
-                                       :scopes [s/Str]}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :identity [user :- {:id s/Str}
-                                         org :- {:id s/Str}
-                                         scopes :-  [s/Str]]
-                              :identity-filter #{ {:user {:id "user-id"}} }
-                              {:status 200
-                               :body {:user-id (:id user)
-                                      :org-id (:id org)
-                                      :scopes scopes}})))]
-
-      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all"]}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :identity {:user {:id "user-id"}
-                                               :org {:id "org-id"}
-                                               :scopes ["all"]}})))))))
-    (let [api-2
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:user-id s/Str
-                                       :org-id s/Str
-                                       :scopes [s/Str]}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :identity [user :- {:id s/Str}
-                                         org :- {:id s/Str}
-                                         scopes :-  [s/Str]]
-                              :identity-filter #{ {:user {:id "bad-id"}} }
-                              {:status 200
-                               :body {:user-id (:id user)
-                                      :org-id (:id org)
-                                      :scopes scopes}})))
-          response (api-2 {:request-method :post
-                           :uri "/test/test"
-                           :headers {"accept" "application/edn"
-                                     "content-type" "application/edn"}
-                           :body-params {:lorem "ipsum"}
-                           :identity {:user {:id "user-id"}
-                                      :org {:id "org-id"}
-                                      :scopes ["all"]}})
-          parsed-body (read-string (slurp (:body response)))]
-      (is (= 403 (:status response)))
-      (is (= {:error :insufficient_access
-              :error_description "You don't have the required credentials to access this route"}
-             (select-keys parsed-body [:error :error_description]))))
-
-    (let [api-3
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:user-id s/Str
-                                       :org-id s/Str
-                                       :scopes [s/Str]}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :identity [user :- {:id s/Str}
-                                         org :- {:id s/Str}
-                                         scopes :-  [s/Str]]
-                              :identity-filter #{ {:scopes #{"all"}} }
-                              {:status 200
-                               :body {:user-id (:id user)
-                                      :org-id (:id org)
-                                      :scopes scopes}})))
-          response (api-3 {:request-method :post
-                           :uri "/test/test"
-                           :headers {"accept" "application/edn"
-                                     "content-type" "application/edn"}
-                           :body-params {:lorem "ipsum"}
-                           :identity {:user {:id "user-id"}
-                                      :org {:id "org-id"}
-                                      :scopes ["all" "foo"]}})]
-      (is (= 200 (:status response)))
-      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all" "foo"]}
-             (read-string (slurp (:body response)))))))
-
-  (testing "scopes"
-    (let [api-1
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:user-id s/Str
-                                       :org-id s/Str
-                                       :scopes [s/Str]}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :identity [user :- {:id s/Str}
-                                         org :- {:id s/Str}
-                                         scopes :-  [s/Str]]
-                              :scopes #{"scope1" "root/sub1/sub2:read"}
-                              {:status 200
-                               :body {:user-id (:id user)
-                                      :org-id (:id org)
-                                      :scopes scopes}})))]
-
-      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["scope1" "root/sub1/sub2:read"]}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :identity {:user {:id "user-id"}
-                                               :org {:id "org-id"}
-                                               :scopes ["scope1" "root/sub1/sub2:read"]}}))))))
-
-      (is (= {:error :missing_scope
-              :error_description "You don't have the required credentials to access this route"
-              :trace_id "00000000-0000-0000-0000-000000000000"}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :identity {:user {:id "user-id"}
-                                               :org {:id "org-id"}
-                                               :scopes ["scope1"]}}))))))
-
-      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["scope1" "root"]}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :identity {:user {:id "user-id"}
-                                               :org {:id "org-id"}
-                                               :scopes ["scope1" "root"]}})))))
-          "User with scope1 and root scopes should have access")
-
-      (is (= {:error :missing_scope
-              :error_description "You don't have the required credentials to access this route"
-              :trace_id "00000000-0000-0000-0000-000000000000"}
-             (read-string
-              (slurp (:body (api-1 {:request-method :post
-                                    :uri "/test/test"
-                                    :headers {"accept" "application/edn"
-                                              "content-type" "application/edn"}
-                                    :body-params {:lorem "ipsum"}
-                                    :identity {:user {:id "user-id"}
-                                               :org {:id "org-id"}
-                                               :scopes ["scope1" "root:write"]}})))))
-          "User shouldn't have access to the scope root/sub1/sub2:read")
-      )
-    (let [api-2
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:user-id s/Str
-                                       :org-id s/Str
-                                       :scopes [s/Str]}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :identity [user :- {:id s/Str}
-                                         org :- {:id s/Str}
-                                         scopes :-  [s/Str]]
-                              :scopes #{ "foo" }
-                              {:status 200
-                               :body {:user-id (:id user)
-                                      :org-id (:id org)
-                                      :scopes scopes}})))
-          response (api-2 {:request-method :post
-                           :uri "/test/test"
-                           :headers {"accept" "application/edn"
-                                     "content-type" "application/edn"}
-                           :body-params {:lorem "ipsum"}
-                           :identity {:user {:id "user-id"}
-                                      :org {:id "org-id"}
-                                      :scopes ["all"]}})]
-      (is (= 403 (:status response)))
-      (is (= {:error :missing_scope
-              :error_description "You don't have the required credentials to access this route"
-              :trace_id "00000000-0000-0000-0000-000000000000"}
-             (read-string (slurp (:body response))))))
-
-    (let [api-3
-          (api {}
-               (context "/test" []
-                        (POST "/test" []
-                              :return {:user-id s/Str
-                                       :org-id s/Str
-                                       :scopes [s/Str]}
-                              :body-params  [{lorem :- s/Str ""}]
-                              :summary "Does nothing"
-                              :identity [user :- {:id s/Str}
-                                         org :- {:id s/Str}
-                                         scopes :-  [s/Str]]
-                              :scopes #{ "all" "foo" }
-                              {:status 200
-                               :body {:user-id (:id user)
-                                      :org-id (:id org)
-                                      :scopes scopes}})))
-
-          response-1 (api-3 {:request-method :post
-                             :uri "/test/test"
-                             :headers {"accept" "application/edn"
-                                       "content-type" "application/edn"}
-                             :body-params {:lorem "ipsum"}
-                             :identity {:user {:id "user-id"}
-                                        :org {:id "org-id"}
-                                        :scopes ["all" "foo"]}})
-          response-2 (api-3 {:request-method :post
-                             :uri "/test/test"
-                             :headers {"accept" "application/edn"
-                                       "content-type" "application/edn"}
-                             :body-params {:lorem "ipsum"}
-                             :identity {:user {:id "user-id"}
-                                        :org {:id "org-id"}
-                                        :scopes ["all"]}})]
-      (is (= 200 (:status response-1)))
-      (is (= {:user-id "user-id", :org-id "org-id", :scopes ["all" "foo"]}
-             (read-string (slurp (:body response-1)))))
-
-      (is (= 403 (:status response-2)))
-      (is (= {:error :missing_scope
-              :error_description "You don't have the required credentials to access this route"
-              :trace_id "00000000-0000-0000-0000-000000000000"}
-             (read-string (slurp (:body response-2))))))))
-
-(deftest sub-hash-test
-  (testing "positive sub-hash?"
-    (is (sut/sub-hash? {:foo 1 :bar 2} {:foo 1 :bar 2 :baz 3}))
-    (is (sut/sub-hash?
-         {:foo 1 :bar #{2 3}}
-         {:foo 1 :bar #{1 2 3 4} :baz 3}))
-
-    (is (sut/sub-hash? {:a :b}
-                       {:a :b}))
-
-    (is (sut/sub-hash? {:a #{:a :b}}
-                       {:a #{:a :b}}))
-
-    (is (sut/sub-hash? {:a #{:a :b}}
-                       {:a #{:a :b :c}}))
-
-    (is (sut/sub-hash? {:foo 1 :bar #{2 3}}
-                       {:foo 1 :bar #{1 2 3 4}})))
-
-  (testing "negative sub-hash?"
-    (is (not (sut/sub-hash? {:a :b}
-                            {:a :c})))
-    (is (not (sut/sub-hash? {:a #{:a :b :c}}
-                            {:a #{:a :b}})))
-    (is (not (sut/sub-hash?
-              {:foo 1 :bar 2}
-              {:foo 1})))
-
-    (is (not (sut/sub-hash?
-              {:foo 1 :bar 2}
-              {:foo 1 :bar 3})))))
-
-(deftest check-jwt-filter-test
-  (is (nil? (sut/check-jwt-filter! nil {:foo "quux"}))
-      "JWT should alway pass when there is no filter")
-
-  (is (nil? (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
-                                   {:foo "bar"})))
-
-  (is (nil? (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
-                                   {:foo "bar"
-                                    :bar "baz"})))
-
-  (is (nil? (sut/check-jwt-filter! #{{:scopes ["admin"]}}
-                                   {:foo "bar"
-                                    :scopes ["admin" "user"]})))
-
-  (is (try (sut/check-jwt-filter! #{{:scopes ["admin"]}}
-                                  {:foo "bar"
-                                   :scopes ["user"]})
-           false
-           (catch Exception e
-             true)))
-
-  (is (try (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
-                                  {:foo "quux"})
-           false
-           (catch Exception e
-             true)))
-
-  (is (try (sut/check-jwt-filter! #{{:foo "bar"} {:foo "baz"}}
-                                  {:foo "quux"
-                                   :baz "bar"})
-           false
-           (catch Exception e
-             true))))
-
-(deftest check-identity-filter-test
-  (is (nil? (sut/check-identity-filter! nil {:foo "quux"}))
-      "JWT should alway pass when there is no filter")
-
-  (is (nil? (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
-                                        {:foo "bar"})))
-
-  (is (nil? (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
-                                        {:foo "bar"
-                                         :bar "baz"})))
-
-  (is (nil? (sut/check-identity-filter! #{{:scopes ["admin"]}}
-                                        {:foo "bar"
-                                         :scopes ["admin" "user"]})))
-
-  (is (nil? (sut/check-identity-filter! #{{:user {:id "foo"}}
-                                          {:user {:id "bar"}}}
-                                        {:user {:id "foo"}
-                                         :scopes ["admin" "user"]})))
-
-  (is (nil? (sut/check-identity-filter! #{{:user {:id "foo"}}
-                                          {:user {:id "bar"}}}
-                                        {:user {:id "foo"
-                                                :name "user-name"}
-                                         :scopes ["admin" "user"]})))
-  (is (nil? (sut/check-identity-filter! #{{:user {:id "foo"}}
-                                          {:user {:id "bar"}}}
-                                        {:user {:id "bar"
-                                                :name "user-name"}
-                                         :scopes ["admin" "user"]})))
-
-  (is (nil? (sut/check-identity-filter! #{{:user {:scopes #{"foo"}}}}
-                                        {:user {:scopes ["foo" "bar"]}
-                                         :a "b"})))
-
-  (is (try (sut/check-identity-filter! #{{:user {:scopes #{"foo"}}}}
-                                       {:user {:scopes ["bar"]}
-                                        :a "b"})
-           false
-           (catch Exception e
-             true)))
-
-  (is (try (sut/check-identity-filter! #{{:user {:id "foo"}}
-                                         {:user {:id "bar"}}}
-                                       {:user {:id "baz"}
-                                        :scopes ["admin" "user"]})
-           false
-           (catch Exception e
-             true)))
-
-  (is (try (sut/check-identity-filter! #{{:scopes ["admin"]}}
-                                       {:foo "bar"
-                                        :scopes ["user"]})
-           false
-           (catch Exception e
-             true)))
-
-  (is (try (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
-                                       {:foo "quux"})
-           false
-           (catch Exception e
-             true)))
-
-  (is (try (sut/check-identity-filter! #{{:foo "bar"} {:foo "baz"}}
-                                       {:foo "quux"
-                                        :baz "bar"})
-           false
-           (catch Exception e
-             true))))
 
 (deftest jwt->oauth-ids-test
   (is (= {:scopes #{"scope1" "scope2"},
@@ -834,71 +377,6 @@
            "http://example.com/claims/oauth/kind" "code"})))
   )
 
-(deftest scopes-logic-test
-  (is (sut/sub-list ["a" "b"] ["a"]))
-  (is (sut/sub-list ["a" "b"] ["a" "b"]))
-  (is (not (sut/sub-list ["a"] ["a" "b"])))
-
-  (is (sut/match-access #{:read}
-                        #{:read :write}))
-  (is (sut/match-access #{:read :write}
-                        #{:read :write}))
-  (is (not (sut/match-access #{:read :write}
-                             #{:write})))
 
 
-  (is (sut/match-scope (sut/to-scope-repr "sub")
-                       (sut/to-scope-repr "sub")))
-  (is (sut/match-scope (sut/to-scope-repr "sub:read")
-                       (sut/to-scope-repr "sub")))
-  (is (not (sut/match-scope (sut/to-scope-repr "root/sub")
-                            (sut/to-scope-repr "sub"))))
 
-  (is (sut/accepted-by-scopes
-       #{(sut/to-scope-repr "enrich")
-         (sut/to-scope-repr "auth")}
-       #{(sut/to-scope-repr "enrich")
-         (sut/to-scope-repr "auth")}))
-
-  (is (sut/accepted-by-scopes
-       #{(sut/to-scope-repr "enrich")
-         (sut/to-scope-repr "auth:read")}
-       #{(sut/to-scope-repr "enrich")
-         (sut/to-scope-repr "auth")}))
-
-  (is (not (sut/accepted-by-scopes
-            #{(sut/to-scope-repr "enrich")
-              (sut/to-scope-repr "auth")}
-            #{}))))
-
-(deftest accepted-by-scopes
-  (testing " subset is accepted"
-    (is (sut/check-scopes #{"foo"} #{"foo"}))
-    (is (sut/check-scopes  #{"foo"} #{"foo" "bar"}))
-    (is (not (sut/check-scopes  #{"bar"} #{"foo"})))
-    (is (not (sut/check-scopes  #{"foo" "bar"} #{"foo"})))
-    (is (sut/check-scopes  #{"foo" "bar"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo" "bar"} #{"foo" "bar" "baz"})))
-  (testing "superpath are accepted"
-    (is (sut/check-scopes  #{"foo/bar"} #{"foo"}))
-    (is (sut/check-scopes  #{"foo/bar/baz"} #{"foo"}))
-    (is (not (sut/check-scopes  #{"foobar/baz"} #{"foo"}))))
-  (testing "access are respected"
-    (is (sut/check-scopes  #{"foo/bar:read"} #{"foo"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:write"} #{"foo"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:rw"} #{"foo"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:rw"} #{"foo"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:read"} #{"foo:read"}))
-    (is (not (sut/check-scopes  #{"foo/bar/baz:write"} #{"foo:read"})))
-    (is (sut/check-scopes  #{"foo/bar:read"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:write"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:rw"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:rw"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:read"} #{"foo:read" "bar"}))
-    (is (not (sut/check-scopes  #{"foo/bar/baz:write"} #{"foo:read" "bar"})))
-    (is (sut/check-scopes  #{"foo/bar:read" "bar"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:write" "bar"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:rw" "bar"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:rw" "bar"} #{"foo" "bar"}))
-    (is (sut/check-scopes  #{"foo/bar/baz:read" "bar"} #{"foo:read" "bar"}))
-    (is (not (sut/check-scopes  #{"foo/bar/baz:write" "bar"} #{"foo:read" "bar"})))))
