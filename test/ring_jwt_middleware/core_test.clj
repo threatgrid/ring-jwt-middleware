@@ -305,29 +305,15 @@
     (let [post-transform (fn [m] {:user {:id (:sub m)}
                                   :org {:id (:foo m)}})
           wrapper-check (sut/wrap-jwt-auth-fn
-                         {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
-                          :long-lived-jwt? (constantly false)})
-          wrapper-no-check (sut/wrap-jwt-auth-fn
-                            {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
-                             :long-lived-jwt? (constantly true)})
+                         {:pubkey-path "resources/cert/ring-jwt-middleware.pub"})
           ring-fn-1 (wrapper-check
-                     (fn [req] {:status 200
-                                :body (:identity req)}))
-          ring-fn-2 (wrapper-no-check
                      (fn [req] {:status 200
                                 :body (:identity req)}))
           req {:headers {"authorization"
                          (str "Bearer " jwt-token-1)}}]
       (is (= 401
              (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 4))]
-               (:status (ring-fn-1 req)))))
-      ;; should expire only using :exp not runtime max-jwt-lifetime-in-sec
-      (is (= 200
-             (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 4))]
-               (:status (ring-fn-2 req)))))
-      (is (= 401
-             (with-redefs [time/now (constantly (time/date-time 2018 07 1 9 17 4))]
-               (:status (ring-fn-2 req))))))))
+               (:status (ring-fn-1 req))))))))
 
 
 (deftest jwt->oauth-ids-test
