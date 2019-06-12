@@ -112,12 +112,12 @@
 (defn default-error-handler
   "Return an `unauthorized` HTTP response
   and log the error along debug infos"
-  [log-fn infos error-msg]
-  (log-fn error-msg
-          (assoc infos
-                 :level :info
-                 :error :jwt_check_error
-                 :error_description error-msg))
+  [error-msg infos]
+  (log/info error-msg
+            (assoc infos
+                   :level :info
+                   :error :jwt_check_error
+                   :error_description error-msg))
   (unauthorized error-msg))
 
 (def default-jwt-lifetime-in-sec 86400)
@@ -272,27 +272,25 @@
                                      jwt-max-lifetime-in-sec
                                      jwt-check-fn
                                      structured-log-fn)]
-                (handle-error {:jwt jwt
+                (handle-error (format "(%s) %s"
+                                      (or (jwt->user-id jwt) "Unknown User ID")
+                                      (str/join ", " validation-errors))
+                              {:jwt jwt
                                :error :jwt_validation_error
-                               :errors validation-errors
-                               :error_description (format "(%s) %s"
-                                                          (or (jwt->user-id jwt) "Unknown User ID")
-                                                          (str/join ", " validation-errors))})
+                               :errors validation-errors})
                 (if (try (is-revoked-fn jwt)
                          (catch Exception e
                            (structured-log-fn "is-revoked-fn thrown an exception for"
                                               {:level :error
                                                :jwt jwt})
                            (throw e)))
-                  (handle-error {:jwt jwt
-                                 :error :jwt_revoked
-                                 :error_description
-                                 (format "JWT revoked for %s"
-                                         (or (jwt->user-id jwt) "Unknown User ID"))})
+                  (handle-error (format "JWT revoked for %s"
+                                        (or (jwt->user-id jwt) "Unknown User ID"))
+                                {:jwt jwt
+                                 :error :jwt_revoked})
                   (handler (assoc request
                                   :identity (post-jwt-format-fn jwt)
                                   :jwt jwt))))
-              (handle-error {:authorization-header (str "Bearer:" raw-jwt)
-                             :error_description
-                             "Invalid Authorization Header (couldn't decode the JWT)"}))
+              (handle-error "Invalid Authorization Header (couldn't decode the JWT)"
+                            {:authorization-header (str "Bearer:" raw-jwt)}))
             (no-jwt-fn request)))))))
