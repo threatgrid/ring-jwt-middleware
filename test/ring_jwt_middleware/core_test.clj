@@ -22,17 +22,13 @@
 
 (defn make-jwt
   "a useful one liner for easy testing"
-  [input-map]
-  (-> input-map
-      clj-jwt.core/jwt
-      (clj-jwt.core/sign
-       :RS256
-       (clj-jwt.key/private-key
-        "resources/cert/ring-jwt-middleware.key"
-        "clojure"))
-      clj-jwt.core/to-str))
-
-
+  [input-map privkey-name]
+  (let [privkey (clj-jwt.key/private-key
+                 (str "resources/cert/" privkey-name ".key") "clojure")]
+    (-> input-map
+        clj-jwt.core/jwt
+        (clj-jwt.core/sign :RS256 privkey)
+        clj-jwt.core/to-str)))
 
 (def log-events (atom []))
 
@@ -53,19 +49,60 @@
 
 (use-fixtures :each with-clean-event-logs)
 
+(defn epoch-to-time
+  [e]
+  (clj-time.coerce/from-long (* 1000 e)))
+
 (def input-jwt-token-1
   "a map for creating a sample token with clj-jwt"
   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
-   :exp (clj-time.coerce/from-long (* 1000 1499419023))
-   :iat (clj-time.coerce/from-long (* 1000 1498814223)) ;; 2017-06-30T09:17:03Z
-   :nbf (clj-time.coerce/from-long (* 1000 1498813923))
+   :exp (epoch-to-time 1499419023)
+   :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
+   :nbf (epoch-to-time 1498813923)
    :sub "foo@bar.com"
+   :iss "TEST-ISSUER-1"
    :user-identifier "foo@bar.com"
    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
    :foo "bar"})
 
 (def jwt-token-1
-  "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyLWlkZW50aWZpZXIiOiJmb29AYmFyLmNvbSIsInN1YiI6ImZvb0BiYXIuY29tIiwiZXhwIjoxNDk5NDE5MDIzLCJqdGkiOiJyM2UwM2FjNmUtOGQwOS00ZDVlLTg1OTgtMzBlNTFhMjZkZDJkIiwibmJmIjoxNDk4ODEzOTIzLCJmb28iOiJiYXIiLCJ1c2VyX2lkIjoiZjAwMTA5MjQtZTFiYy00YjAzLWI2MDAtODljNmNmNTI3NTdjIiwiaWF0IjoxNDk4ODE0MjIzfQ.PLNokPvuPz5t0Se3m2pjxzB97lJoWvGICXAia7mAxTiW8WBH0pOOm74ffHEeXGH1y8bRlfmH29eVKHq_IpZfYRIV0ydegQhbty5C35ij3Mqo0A3pAGOoezyp3XymHHE-JeEAgulxYy8BWN9zpij-zYO2uAZf4r7HIuNT5CJWTnmS4AYSrNeQl0ntTLUYwjDLwuJrL7VH4JeiwSEK-HBN1YkxLNPc22hyXKHz37vj4ERO1-GnEmdtOIntZ-BRj-qoX0q1Qx0BGyK-kJgRz_nHrbyX6GtuqYXzhU-uQ-S122K1s6Vek9GmtncchH2qkMaAtv7J4NTVnFU_3t_7LiOlRw")
+  (make-jwt
+   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+    :exp (epoch-to-time 1499419023)
+    :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
+    :nbf (epoch-to-time 1498813923)
+    :sub "foo@bar.com"
+    :iss "TEST-ISSUER-1"
+    :user-identifier "foo@bar.com"
+    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+    :foo "bar"}
+   "jwt-key-1"))
+
+(def jwt-token-2
+  (make-jwt
+   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+    :exp (epoch-to-time 1499419023)
+    :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
+    :nbf (epoch-to-time 1498813923)
+    :sub "foo@bar.com"
+    :iss "TEST-ISSUER-2"
+    :user-identifier "foo@bar.com"
+    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+    :foo "bar"}
+   "jwt-key-2"))
+
+(def jwt-token-3
+  (make-jwt
+   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+    :exp (epoch-to-time 1499419023)
+    :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
+    :nbf (epoch-to-time 1498813923)
+    :sub "foo@bar.com"
+    :iss "TEST-ISSUER-3"
+    :user-identifier "foo@bar.com"
+    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+    :foo "bar"}
+   "jwt-key-3"))
 
 (def decoded-jwt-1
   "jwt-token-1 decoded"
@@ -74,29 +111,40 @@
    :iat 1498814223 ;; 2017-06-30T09:17:03Z
    :nbf 1498813923
    :sub "foo@bar.com"
+   :iss "TEST-ISSUER-1"
    :user-identifier "foo@bar.com"
    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
    :foo "bar"})
 
-(def jwt-signed-with-wrong-algorithm
-  "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJqdGkiOiJyM2UwM2FjNmUtOGQwOS00ZDVlLTg1OTgtMzBlNTFhMjZkZDJkIiwiZXhwIjoxNDk5NDE5MDIzLCJpYXQiOjE0OTg4MTQyMjMsIm5iZiI6MTQ5ODgxMzkyMywic3ViIjoiZm9vQGJhci5jb20iLCJ1c2VyLWlkZW50aWZpZXIiOiJmb29AYmFyLmNvbSIsInVzZXJfaWQiOiJmMDAxMDkyNC1lMWJjLTRiMDMtYjYwMC04OWM2Y2Y1Mjc1N2MiLCJmb28iOiJiYXIifQ.")
+(def jwt-signed-with-wrong-key
+  (make-jwt
+   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+    :exp (epoch-to-time 1499419023)
+    :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
+    :nbf (epoch-to-time 1498813923)
+    :sub "foo@bar.com"
+    :iss "TEST-ISSUER-1"
+    :user-identifier "foo@bar.com"
+    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+    :foo "bar"}
+   "jwt-key-2"))
 
 (def decoded-jwt-2
   {:user-identifier "bar@foo.com",
+   :iss "TEST-ISSUER-1"
    :iat 1487168050 ;; 2017-02-15T14:14:10Z
    :exp (+ 1487168050 (* 7 24 60 60))
    :nbf (- 1487168050 (* 5 24 60 60))})
 
+(def pubkey1 (public-key "resources/cert/jwt-key-1.pub"))
+(def pubkey2 (public-key "resources/cert/jwt-key-2.pub"))
+(def pubkey3 (public-key "resources/cert/jwt-key-3.pub"))
+
 (deftest decode-test
   (is (= decoded-jwt-1
-         (sut/decode jwt-token-1
-                     (public-key "resources/cert/ring-jwt-middleware.pub")
-                     test-log-fn)))
+         (sut/decode jwt-token-1 (constantly pubkey1) test-log-fn)))
   (is (= [] @log-events))
-  (is (nil?
-       (sut/decode jwt-signed-with-wrong-algorithm
-                   (public-key "resources/cert/ring-jwt-middleware.pub")
-                   test-log-fn)))
+  (is (nil? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1) test-log-fn)))
 
   (is (= "Invalid signature" (:msg (first @log-events))))
   (is (= :warn (:level (:infos (first @log-events)))))
@@ -105,6 +153,7 @@
           :iat 1498814223
           :nbf 1498813923
           :sub "foo@bar.com"
+          :iss "TEST-ISSUER-1"
           :user-identifier "foo@bar.com"
           :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
           :foo "bar"}
@@ -134,6 +183,7 @@
                :iat 1498814223,
                :nbf 1498813923,
                :sub "foo@bar.com",
+               :iss "TEST-ISSUER-1"
                :user-identifier "foo@bar.com",
                :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
                :foo "bar"}}}]
@@ -180,7 +230,7 @@
 (deftest wrap-jwt-auth-fn-test
   (testing "basic usage"
     (let [wrapper (sut/wrap-jwt-auth-fn
-                   {:pubkey-path "resources/cert/ring-jwt-middleware.pub"})
+                   {:pubkey-path "resources/cert/jwt-key-1.pub"})
           ring-fn-1 (wrapper (fn [req] {:status 200
                                         :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
@@ -211,9 +261,39 @@
         (is (= 200
                (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 3))]
                  (:status (ring-fn-1 req-1))))))))
+  (testing "multiple keys support"
+    (let [pubkey-fn (fn [claims]
+                      (case (:iss claims)
+                        "TEST-ISSUER-1" pubkey1
+                        "TEST-ISSUER-2" pubkey2))
+          wrapper (sut/wrap-jwt-auth-fn {:pubkey-fn pubkey-fn})
+          ring-fn-1 (wrapper (fn [req] {:status 200
+                                        :body (:identity req)}))
+          ring-fn-2 (wrapper (fn [req] {:status 200
+                                        :body(:jwt req)}))
+          req-1 {:headers {"authorization"
+                           (str "Bearer " jwt-token-1)}}
+
+          req-2 {:headers {"authorization"
+                           (str "Bearer " jwt-token-2)}}
+
+          req-3 {:headers {"authorization"
+                           (str "Bearer " jwt-token-3)}}]
+      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
+        (let [response-1 (ring-fn-1 req-1)
+              response-2 (ring-fn-2 req-1)
+              response-3 (ring-fn-1 req-2)
+              response-4 (ring-fn-1 req-3)]
+          (:status (ring-fn-1 req-1))
+          (is (= 200 (:status response-1)))
+          (is (= "foo@bar.com" (:body response-1)))
+          (is (= decoded-jwt-1 (:body response-2)))
+          (is (= 200 (:status response-3)))
+          (is (= "foo@bar.com" (:body response-3)))
+          (is (= 401 (:status response-4)))))))
   (testing "Authorized No Auth Header strategy test"
     (let [wrapper (sut/wrap-jwt-auth-fn
-                   {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                   {:pubkey-path "resources/cert/jwt-key-1.pub"
                     :no-jwt-handler sut/authorize-no-jwt-header-strategy})
           ring-fn-1 (wrapper (fn [req] {:status 200
                                         :body (:identity req)}))
@@ -249,7 +329,7 @@
                                 (assoc :identity "dummy")
                                 handler)))
           wrapper (sut/wrap-jwt-auth-fn
-                   {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                   {:pubkey-path "resources/cert/jwt-key-1.pub"
                     :no-jwt-handler wrap-dummy-id})
           ring-fn (wrapper (fn [req] {:status 200
                                       :body (:identity req)}))
@@ -267,11 +347,11 @@
   (testing "revocation test"
     (let [always-revoke (fn [_] true)
           wrapper-always-revoke (sut/wrap-jwt-auth-fn
-                                 {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                                 {:pubkey-path "resources/cert/jwt-key-1.pub"
                                   :is-revoked-fn always-revoke})
           never-revoke (fn [_] false)
           wrapper-never-revoke (sut/wrap-jwt-auth-fn
-                                {:pubkey-path  "resources/cert/ring-jwt-middleware.pub"
+                                {:pubkey-path  "resources/cert/jwt-key-1.pub"
                                  :is-revoked-fn never-revoke})
           ring-fn-1 (wrapper-always-revoke
                      (fn [req] {:status 200
@@ -290,7 +370,7 @@
     (let [post-transform (fn [m] {:user {:id (:sub m)}
                                   :org {:id (:foo m)}})
           wrapper-tr (sut/wrap-jwt-auth-fn
-                      {:pubkey-path "resources/cert/ring-jwt-middleware.pub"
+                      {:pubkey-path "resources/cert/jwt-key-1.pub"
                        :post-jwt-format-fn post-transform})
           ring-fn-1 (wrapper-tr
                      (fn [req] {:status 200
@@ -305,7 +385,7 @@
     (let [post-transform (fn [m] {:user {:id (:sub m)}
                                   :org {:id (:foo m)}})
           wrapper-check (sut/wrap-jwt-auth-fn
-                         {:pubkey-path "resources/cert/ring-jwt-middleware.pub"})
+                         {:pubkey-path "resources/cert/jwt-key-1.pub"})
           ring-fn-1 (wrapper-check
                      (fn [req] {:status 200
                                 :body (:identity req)}))
@@ -314,7 +394,6 @@
       (is (= 401
              (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 4))]
                (:status (ring-fn-1 req))))))))
-
 
 (deftest jwt->oauth-ids-test
   (is (= {:scopes #{"scope1" "scope2"},
@@ -360,8 +439,7 @@
            "http://example.com/claims/org/id" "org-id"
            "http://example.com/claims/org/name" "ACME Inc."
            "http://example.com/claims/oauth/client/id" "client-id"
-           "http://example.com/claims/oauth/kind" "code"})))
-  )
+           "http://example.com/claims/oauth/kind" "code"}))))
 
 
 
