@@ -26,12 +26,19 @@
 
 (defn decode
   "Given a JWT return an Auth hash-map"
-  [token pubkeys log-fn]
+  [token pubkey-fn log-fn]
   (try
     (let [jwt (str->jwt token)]
-      (if (some #(verify jwt :RS256 %) pubkeys)
-        (:claims jwt)
-        (do (log-fn "Invalid signature"
+      (if-let [pubkey (pubkey-fn (:claims jwt))]
+        (if (verify jwt :RS256 pubkey)
+          (:claims jwt)
+          (do (log-fn "Invalid signature"
+                      {:level :warn
+                       :jwt jwt
+                       :token token})
+              nil))
+        (do (log-fn (str "Cannot retrieve a key for your JWT."
+                         " One common reason would be that it has the wrong `iss` claim")
                     {:level :warn
                      :jwt jwt
                      :token token})
@@ -241,6 +248,7 @@
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check"
   [{:keys [pubkey-path
+           pubkey-fn
            is-revoked-fn
            jwt-check-fn
            jwt-max-lifetime-in-sec
@@ -253,10 +261,7 @@
          post-jwt-format-fn jwt->user-id
          no-jwt-handler forbid-no-jwt-header-strategy
          structured-log-fn default-structured-log}}]
-  (let [pubkey-paths (if (string? pubkey-path)
-                       [pubkey-path]
-                       pubkey-path)
-        pubkeys (map public-key pubkey-paths)
+  (let [p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
                         (do (structured-log-fn
@@ -268,7 +273,7 @@
       (let [no-jwt-fn (no-jwt-handler handler)]
         (fn [request]
           (if-let [raw-jwt (get-jwt request)]
-            (if-let [jwt (decode raw-jwt pubkeys structured-log-fn)]
+            (if-let [jwt (decode raw-jwt p-fn structured-log-fn)]
               (if-let [validation-errors
                        (validate-jwt jwt
                                      jwt-max-lifetime-in-sec

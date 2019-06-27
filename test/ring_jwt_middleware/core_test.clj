@@ -60,6 +60,7 @@
    :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
    :nbf (epoch-to-time 1498813923)
    :sub "foo@bar.com"
+   :iss "TEST-ISSUER-1"
    :user-identifier "foo@bar.com"
    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
    :foo "bar"})
@@ -71,10 +72,37 @@
     :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
     :nbf (epoch-to-time 1498813923)
     :sub "foo@bar.com"
+    :iss "TEST-ISSUER-1"
     :user-identifier "foo@bar.com"
     :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
     :foo "bar"}
    "jwt-key-1"))
+
+(def jwt-token-2
+  (make-jwt
+   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+    :exp (epoch-to-time 1499419023)
+    :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
+    :nbf (epoch-to-time 1498813923)
+    :sub "foo@bar.com"
+    :iss "TEST-ISSUER-2"
+    :user-identifier "foo@bar.com"
+    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+    :foo "bar"}
+   "jwt-key-2"))
+
+(def jwt-token-3
+  (make-jwt
+   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+    :exp (epoch-to-time 1499419023)
+    :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
+    :nbf (epoch-to-time 1498813923)
+    :sub "foo@bar.com"
+    :iss "TEST-ISSUER-3"
+    :user-identifier "foo@bar.com"
+    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+    :foo "bar"}
+   "jwt-key-3"))
 
 (def decoded-jwt-1
   "jwt-token-1 decoded"
@@ -83,6 +111,7 @@
    :iat 1498814223 ;; 2017-06-30T09:17:03Z
    :nbf 1498813923
    :sub "foo@bar.com"
+   :iss "TEST-ISSUER-1"
    :user-identifier "foo@bar.com"
    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
    :foo "bar"})
@@ -94,6 +123,7 @@
     :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
     :nbf (epoch-to-time 1498813923)
     :sub "foo@bar.com"
+    :iss "TEST-ISSUER-1"
     :user-identifier "foo@bar.com"
     :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
     :foo "bar"}
@@ -101,6 +131,7 @@
 
 (def decoded-jwt-2
   {:user-identifier "bar@foo.com",
+   :iss "TEST-ISSUER-1"
    :iat 1487168050 ;; 2017-02-15T14:14:10Z
    :exp (+ 1487168050 (* 7 24 60 60))
    :nbf (- 1487168050 (* 5 24 60 60))})
@@ -111,9 +142,9 @@
 
 (deftest decode-test
   (is (= decoded-jwt-1
-         (sut/decode jwt-token-1 [pubkey1] test-log-fn)))
+         (sut/decode jwt-token-1 (constantly pubkey1) test-log-fn)))
   (is (= [] @log-events))
-  (is (nil? (sut/decode jwt-signed-with-wrong-key [pubkey1] test-log-fn)))
+  (is (nil? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1) test-log-fn)))
 
   (is (= "Invalid signature" (:msg (first @log-events))))
   (is (= :warn (:level (:infos (first @log-events)))))
@@ -122,6 +153,7 @@
           :iat 1498814223
           :nbf 1498813923
           :sub "foo@bar.com"
+          :iss "TEST-ISSUER-1"
           :user-identifier "foo@bar.com"
           :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
           :foo "bar"}
@@ -151,6 +183,7 @@
                :iat 1498814223,
                :nbf 1498813923,
                :sub "foo@bar.com",
+               :iss "TEST-ISSUER-1"
                :user-identifier "foo@bar.com",
                :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
                :foo "bar"}}}]
@@ -229,37 +262,35 @@
                (with-redefs [time/now (constantly (time/date-time 2017 07 1 9 17 3))]
                  (:status (ring-fn-1 req-1))))))))
   (testing "multiple keys support"
-    (let [wrapper (sut/wrap-jwt-auth-fn
-                   {:pubkey-path ["resources/cert/jwt-key-2.pub"
-                                  "resources/cert/jwt-key-1.pub"]})
+    (let [pubkey-fn (fn [claims]
+                      (case (:iss claims)
+                        "TEST-ISSUER-1" pubkey1
+                        "TEST-ISSUER-2" pubkey2))
+          wrapper (sut/wrap-jwt-auth-fn {:pubkey-fn pubkey-fn})
           ring-fn-1 (wrapper (fn [req] {:status 200
                                         :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
                                         :body(:jwt req)}))
           req-1 {:headers {"authorization"
-                           (str "Bearer " jwt-token-1)}}]
+                           (str "Bearer " jwt-token-1)}}
+
+          req-2 {:headers {"authorization"
+                           (str "Bearer " jwt-token-2)}}
+
+          req-3 {:headers {"authorization"
+                           (str "Bearer " jwt-token-3)}}]
       (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
         (let [response-1 (ring-fn-1 req-1)
-              response-2 (ring-fn-2 req-1)]
+              response-2 (ring-fn-2 req-1)
+              response-3 (ring-fn-1 req-2)
+              response-4 (ring-fn-1 req-3)]
           (:status (ring-fn-1 req-1))
           (is (= 200 (:status response-1)))
           (is (= "foo@bar.com" (:body response-1)))
-          (is (= decoded-jwt-1 (:body response-2))))))
-    (let [wrapper (sut/wrap-jwt-auth-fn
-                   {:pubkey-path ["resources/cert/jwt-key-2.pub"
-                                  "resources/cert/jwt-key-3.pub"]})
-          ring-fn-1 (wrapper (fn [req] {:status 200
-                                        :body (:identity req)}))
-          req-1 {:headers {"authorization"
-                           (str "Bearer " jwt-token-1)}}]
-      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
-        (let [response-1 (ring-fn-1 req-1)]
-          (:status (ring-fn-1 req-1))
-          (is (= 401 (:status response-1)))
-          (is (= {:error :invalid_jwt
-                  :error_description
-                  "Invalid Authorization Header (couldn't verify the JWT signature)"}
-                 (:body response-1)))))))
+          (is (= decoded-jwt-1 (:body response-2)))
+          (is (= 200 (:status response-3)))
+          (is (= "foo@bar.com" (:body response-3)))
+          (is (= 401 (:status response-4)))))))
   (testing "Authorized No Auth Header strategy test"
     (let [wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/jwt-key-1.pub"

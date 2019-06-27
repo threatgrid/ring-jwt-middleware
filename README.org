@@ -35,6 +35,7 @@ wrap your routes with it:
 | Option                     | Description                                                                            | Default                        |
 |----------------------------+----------------------------------------------------------------------------------------+--------------------------------|
 | =:pubkey-path=             | the path to your public key                                                            | nil                            |
+| =:pubkey-fn=               | A fn from claims to public key, has precedence over pubkey-path                        | nil                            |
 | =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                  | 86400                          |
 | =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                    | nil                            |
 | =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                            |
@@ -85,7 +86,7 @@ here is a sample token:
 
 ** Generating Certs and a Token
 
-A simple script is available to generate certs for signing the tokens:
+A simple script is available to generate keys for signing the tokens:
 => ./resources/cert/gen_cert.sh=
 some dummy ones are already available for easy testing.
 
@@ -93,5 +94,5 @@ some dummy ones are already available for easy testing.
 
 ** License
 
-Copyright © 2015-2018 Cisco Systems
+Copyright © 2015-2019 Cisco Systems
 Eclipse Public License v1.0
