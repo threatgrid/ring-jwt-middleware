@@ -11,7 +11,7 @@
              [set :as set]
              [string :as str]]
             [compojure.api.meta :as meta]
-            [ring.util.http-response :refer [unauthorized]]))
+            [ring.util.http-response :as resp]))
 
 (defn gen-uuid []
   (str (java.util.UUID/randomUUID)))
@@ -26,10 +26,10 @@
 
 (defn decode
   "Given a JWT return an Auth hash-map"
-  [token pubkey log-fn]
+  [token pubkeys log-fn]
   (try
     (let [jwt (str->jwt token)]
-      (if (verify jwt :RS256 pubkey)
+      (if (some #(verify jwt :RS256 %) pubkeys)
         (:claims jwt)
         (do (log-fn "Invalid signature"
                     {:level :warn
@@ -40,8 +40,7 @@
       (log-fn "JWT decode failed:"
               {:exception_message (.getMessage e)
                :token token
-               :level :warn}
-              )
+               :level :warn})
       nil)))
 
 (defn hr-duration
@@ -113,12 +112,10 @@
   "Return an `unauthorized` HTTP response
   and log the error along debug infos"
   [error-msg infos]
-  (log/info error-msg
-            (assoc infos
-                   :level :info
-                   :error :jwt_check_error
-                   :error_description error-msg))
-  (unauthorized error-msg))
+  (let [err {:error :invalid_jwt
+             :error_description error-msg}]
+    (log/info error-msg (pr-str (into infos err)))
+    (resp/unauthorized err)))
 
 (def default-jwt-lifetime-in-sec 86400)
 
@@ -152,7 +149,9 @@
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
   [handler]
-  (constantly (unauthorized "No Authorization Header")))
+  (constantly
+   (resp/unauthorized {:error :invalid_request
+                       :error_description "No Authorization Header"})))
 
 (def authorize-no-jwt-header-strategy
   "Authorize all request even with no Auth header."
@@ -254,7 +253,10 @@
          post-jwt-format-fn jwt->user-id
          no-jwt-handler forbid-no-jwt-header-strategy
          structured-log-fn default-structured-log}}]
-  (let [pubkey (public-key pubkey-path)
+  (let [pubkey-paths (if (string? pubkey-path)
+                       [pubkey-path]
+                       pubkey-path)
+        pubkeys (map public-key pubkey-paths)
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
                         (do (structured-log-fn
@@ -266,7 +268,7 @@
       (let [no-jwt-fn (no-jwt-handler handler)]
         (fn [request]
           (if-let [raw-jwt (get-jwt request)]
-            (if-let [jwt (decode raw-jwt pubkey structured-log-fn)]
+            (if-let [jwt (decode raw-jwt pubkeys structured-log-fn)]
               (if-let [validation-errors
                        (validate-jwt jwt
                                      jwt-max-lifetime-in-sec
@@ -291,6 +293,6 @@
                   (handler (assoc request
                                   :identity (post-jwt-format-fn jwt)
                                   :jwt jwt))))
-              (handle-error "Invalid Authorization Header (couldn't decode the JWT)"
+              (handle-error "Invalid Authorization Header (couldn't verify the JWT signature)"
                             {:authorization-header (str "Bearer:" raw-jwt)}))
             (no-jwt-fn request)))))))
