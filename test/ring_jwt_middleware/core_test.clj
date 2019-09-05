@@ -166,7 +166,7 @@
   (is (= '("This JWT doesn't contain the following fields #{:exp :nbf}")
          (sut/validate-jwt "jwt" {:user-identifier "foo@bar.com"
                             :iat 1487168050} 86400 test-log-fn)))
-  (testing "check-fn fail"
+  (testing "check-fn throw an exception"
     (is (= "check-fn fail test"
            (try
              (sut/validate-jwt "jwt"
@@ -190,6 +190,19 @@
                :foo "bar"}}}]
            @log-events))
     (reset-log-events))
+
+  (testing "check-fn fail by using the raw-jwt"
+    (is (= ["jwt"]
+           (try
+             (sut/validate-jwt "jwt"
+                               decoded-jwt-1
+                               86400
+                               (fn [raw-jwt jwt] [raw-jwt])
+                               test-log-fn)
+             (catch Exception e (.getMessage e)))))
+    (is (= [] @log-events))
+    (reset-log-events))
+
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
     (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
