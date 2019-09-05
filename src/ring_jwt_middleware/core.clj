@@ -131,7 +131,8 @@
 (defn validate-jwt
   "Run both expiration and user checks,
   return a vec of errors or nothing"
-  ([jwt
+  ([raw-jwt
+    jwt
     jwt-max-lifetime-in-sec
     jwt-check-fn
     log-fn]
@@ -139,7 +140,7 @@
                                      (or jwt-max-lifetime-in-sec
                                          default-jwt-lifetime-in-sec))]
          checks (if (fn? jwt-check-fn)
-                  (or (try (seq (jwt-check-fn jwt))
+                  (or (try (seq (jwt-check-fn raw-jwt jwt))
                            (catch Exception e
                              (log-fn "jwt-check-fn thrown an exception on"
                                      {:level :error
@@ -150,8 +151,8 @@
      (seq (remove nil?
                   (concat checks exp-vals)))))
 
-  ([jwt jwt-max-lifetime-in-sec log-fn]
-   (validate-jwt jwt jwt-max-lifetime-in-sec nil log-fn)))
+  ([raw-jwt jwt jwt-max-lifetime-in-sec log-fn]
+   (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil log-fn)))
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
@@ -275,7 +276,8 @@
           (if-let [raw-jwt (get-jwt request)]
             (if-let [jwt (decode raw-jwt p-fn structured-log-fn)]
               (if-let [validation-errors
-                       (validate-jwt jwt
+                       (validate-jwt raw-jwt
+                                     jwt
                                      jwt-max-lifetime-in-sec
                                      jwt-check-fn
                                      structured-log-fn)]
