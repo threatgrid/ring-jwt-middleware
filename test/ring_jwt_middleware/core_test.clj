@@ -160,18 +160,19 @@
          (get-in (first @log-events) [:infos :jwt :claims]))))
 
 (deftest validate-errors-test
-  (is (nil? (sut/validate-jwt decoded-jwt-1 86400 test-log-fn)))
+  (is (nil? (sut/validate-jwt "jwt" decoded-jwt-1 86400 test-log-fn)))
   (is (= '("This JWT doesn't contain the following fields #{:exp :nbf :iat}")
-         (sut/validate-jwt {} 86400 test-log-fn)))
+         (sut/validate-jwt "jwt" {} 86400 test-log-fn)))
   (is (= '("This JWT doesn't contain the following fields #{:exp :nbf}")
-         (sut/validate-jwt {:user-identifier "foo@bar.com"
+         (sut/validate-jwt "jwt" {:user-identifier "foo@bar.com"
                             :iat 1487168050} 86400 test-log-fn)))
-  (testing "check-fn fail"
+  (testing "check-fn throw an exception"
     (is (= "check-fn fail test"
            (try
-             (sut/validate-jwt decoded-jwt-1
+             (sut/validate-jwt "jwt"
+                               decoded-jwt-1
                                86400
-                               (fn [jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
+                               (fn [raw-jwt jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
                                test-log-fn)
              (catch Exception e (.getMessage e)))))
     (is (= [{:msg "jwt-check-fn thrown an exception on",
@@ -189,35 +190,48 @@
                :foo "bar"}}}]
            @log-events))
     (reset-log-events))
+
+  (testing "check-fn fail by using the raw-jwt"
+    (is (= ["jwt"]
+           (try
+             (sut/validate-jwt "jwt"
+                               decoded-jwt-1
+                               86400
+                               (fn [raw-jwt jwt] [raw-jwt])
+                               test-log-fn)
+             (catch Exception e (.getMessage e)))))
+    (is (= [] @log-events))
+    (reset-log-events))
+
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
     (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
+           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 15 14 10 0))]
     (is (= '("This JWT has expired since 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
+           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 17 15 14 10 0))]
     (is (= '("This JWT has expired since 1 day 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
+           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 18 15 14 10 0))]
     (is (= '("This JWT has expired since 2 days 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
+           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2019 04 03 8 24 5 123))]
     (is (= '("This JWT has expired since 2 years 45 days 18h 9min 55s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400 test-log-fn))))
+           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
 
   (with-redefs
     [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
     (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt decoded-jwt-2 86400 nil test-log-fn)))))
+           (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil test-log-fn)))))
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
