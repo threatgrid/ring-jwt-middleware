@@ -11,7 +11,7 @@
                  [clj-time "0.15.2"] ;threatgrid/clj-momo > yogsototh/clj-jwt, metosin/compojure-api, metosin/ring-http-response
                  [org.mozilla/rhino "1.7.7.1"] ; metosin/compojure-api > threatgrid/clj-momo
                  [com.google.guava/guava "16.0.1"] ; metosin/compojure-api > threatgrid/clj-momo
-                 [yogsototh/clj-jwt "0.3.0"]
+                 [threatgrid/clj-jwt "0.3.1-20200318.165254-1"] ;sha: fdac01d4c9bea71feec67722ee679be45a21508d
                  [threatgrid/clj-momo "0.3.5"]
                  [org.clojure/tools.logging "1.0.0"]
                  [metosin/ring-http-response "0.9.1"]
