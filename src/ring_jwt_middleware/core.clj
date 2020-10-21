@@ -1,8 +1,7 @@
 (ns ring-jwt-middleware.core
   (:require [clj-jwt
-             [core :refer :all]
-             [key :refer [public-key]]
-             [json-key-fn :as jkf]]
+             [core :refer [str->jwt verify]]
+             [key :refer [public-key]]]
             [clojure.tools.logging :as log]
             [clj-momo.lib.clj-time
              [coerce :as time-coerce]
@@ -10,7 +9,6 @@
             [clojure
              [set :as set]
              [string :as str]]
-            [compojure.api.meta :as meta]
             [ring.util.http-response :as resp]))
 
 (defn gen-uuid []
@@ -156,7 +154,7 @@
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
-  [handler]
+  [_handler]
   (constantly
    (resp/unauthorized {:error :invalid_request
                        :error_description "No Authorization Header"})))
@@ -262,7 +260,8 @@
          post-jwt-format-fn jwt->user-id
          no-jwt-handler forbid-no-jwt-header-strategy
          structured-log-fn default-structured-log}}]
-  (let [p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
+  (let [p-key (when pubkey-path (public-key pubkey-path))
+        p-fn (or pubkey-fn (constantly p-key))
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
                         (do (structured-log-fn
