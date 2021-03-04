@@ -284,7 +284,8 @@
                 (handle-error (format "(%s) %s"
                                       (or (jwt->user-id jwt) "Unknown User ID")
                                       (str/join ", " validation-errors))
-                              {:jwt jwt
+                              {:request request
+                               :jwt jwt
                                :error :jwt_validation_error
                                :errors validation-errors})
                 (if (try (is-revoked-fn jwt)
@@ -295,11 +296,13 @@
                            (throw e)))
                   (handle-error (format "JWT revoked for %s"
                                         (or (jwt->user-id jwt) "Unknown User ID"))
-                                {:jwt jwt
+                                {:request request
+                                 :jwt jwt
                                  :error :jwt_revoked})
                   (handler (assoc request
                                   :identity (post-jwt-format-fn jwt)
                                   :jwt jwt))))
               (handle-error "Invalid Authorization Header (couldn't verify the JWT signature)"
-                            {:authorization-header (str "Bearer:" raw-jwt)}))
+                            {:request request
+                             :authorization-header (str "Bearer:" raw-jwt)}))
             (no-jwt-fn request)))))))
