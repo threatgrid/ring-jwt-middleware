@@ -370,15 +370,15 @@
                                    :error-handler error-handler})
           never-revoke (fn [_] false)
           wrapper-never-revoke (sut/wrap-jwt-auth-fn
-                                 {:pubkey-path  "resources/cert/jwt-key-1.pub"
-                                  :is-revoked-fn never-revoke})
+                                {:pubkey-path  "resources/cert/jwt-key-1.pub"
+                                 :is-revoked-fn never-revoke})
           ring-fn-1 (wrapper-always-revoke
-                      (fn [req] {:status 200
-                                 :body (:identity req)}))
+                     (fn [req] {:status 200
+                                :body (:identity req)}))
 
           ring-fn-2 (wrapper-never-revoke
-                      (fn [req] {:status 200
-                                 :body (:identity req)}))
+                     (fn [req] {:status 200
+                                :body (:identity req)}))
           req {:headers {"authorization"
                          (str "Bearer " jwt-token-1)}}
           _ (is (empty? @error-handler-infos-atom))
