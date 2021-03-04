@@ -34,7 +34,7 @@
 
 (defn test-log-fn
   [msg infos]
-  (swap! log-events #(conj % {:msg msg :infos infos})))
+  (swap! log-events conj {:msg msg :infos infos}))
 
 (defn reset-log-events
   []
@@ -175,7 +175,7 @@
                                (fn [raw-jwt jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
                                test-log-fn)
              (catch Exception e (.getMessage e)))))
-    (is (= [{:msg "jwt-check-fn thrown an exception on",
+    (is (= [{:msg "jwt-check-fn threw an exception",
              :infos
              {:level :error,
               :jwt
@@ -360,23 +360,33 @@
           (is (= "dummy" (:body response-auth-header-not-jwt)))))))
   (testing "revocation test"
     (let [always-revoke (fn [_] true)
+          error-handler-infos-atom (atom [])
+          error-handler (fn [msg infos]
+                          (swap! error-handler-infos-atom conj infos)
+                          (sut/default-error-handler msg infos))
           wrapper-always-revoke (sut/wrap-jwt-auth-fn
-                                 {:pubkey-path "resources/cert/jwt-key-1.pub"
-                                  :is-revoked-fn always-revoke})
+                                  {:pubkey-path "resources/cert/jwt-key-1.pub"
+                                   :is-revoked-fn always-revoke
+                                   :error-handler error-handler})
           never-revoke (fn [_] false)
           wrapper-never-revoke (sut/wrap-jwt-auth-fn
-                                {:pubkey-path  "resources/cert/jwt-key-1.pub"
-                                 :is-revoked-fn never-revoke})
+                                 {:pubkey-path  "resources/cert/jwt-key-1.pub"
+                                  :is-revoked-fn never-revoke})
           ring-fn-1 (wrapper-always-revoke
-                     (fn [req] {:status 200
-                                :body (:identity req)}))
+                      (fn [req] {:status 200
+                                 :body (:identity req)}))
 
           ring-fn-2 (wrapper-never-revoke
-                     (fn [req] {:status 200
-                                :body (:identity req)}))
+                      (fn [req] {:status 200
+                                 :body (:identity req)}))
           req {:headers {"authorization"
-                         (str "Bearer " jwt-token-1)}}]
-      (is (= 401 (:status (ring-fn-1 req))))
+                         (str "Bearer " jwt-token-1)}}
+          _ (is (empty? @error-handler-infos-atom))
+          _ (is (= 401 (:status (ring-fn-1 req))))
+          error-handler-infos @error-handler-infos-atom
+          _ (is (seq error-handler-infos))
+          _ (is (every? #(map? (:request %)) error-handler-infos)
+                error-handler-infos)]
       (is (= 200 (:status (ring-fn-2 req))))
       (is (= "foo@bar.com"
              (:body (ring-fn-2 req))))))

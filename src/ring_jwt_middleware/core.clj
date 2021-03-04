@@ -142,7 +142,7 @@
          checks (if (fn? jwt-check-fn)
                   (or (try (seq (jwt-check-fn raw-jwt jwt))
                            (catch Exception e
-                             (log-fn "jwt-check-fn thrown an exception on"
+                             (log-fn "jwt-check-fn threw an exception"
                                      {:level :error
                                       :jwt jwt})
                              (throw e)))
@@ -290,7 +290,7 @@
                                :errors validation-errors})
                 (if (try (is-revoked-fn jwt)
                          (catch Exception e
-                           (structured-log-fn "is-revoked-fn thrown an exception for"
+                           (structured-log-fn "is-revoked-fn threw an exception"
                                               {:level :error
                                                :jwt jwt})
                            (throw e)))
