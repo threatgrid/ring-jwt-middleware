@@ -380,16 +380,21 @@
                      (fn [req] {:status 200
                                 :body (:identity req)}))
           req {:headers {"authorization"
-                         (str "Bearer " jwt-token-1)}}
-          _ (is (empty? @error-handler-infos-atom))
-          _ (is (= 401 (:status (ring-fn-1 req))))
-          error-handler-infos @error-handler-infos-atom
-          _ (is (seq error-handler-infos))
-          _ (is (every? #(map? (:request %)) error-handler-infos)
-                error-handler-infos)]
-      (is (= 200 (:status (ring-fn-2 req))))
-      (is (= "foo@bar.com"
-             (:body (ring-fn-2 req))))))
+                         (str "Bearer " jwt-token-1)}}]
+      (testing "always revoke"
+        (is (empty? @error-handler-infos-atom))
+        (is (= 401 (:status (ring-fn-1 req))))
+        (let [error-handler-infos @error-handler-infos-atom]
+          (testing ":jwt_revoked error handler infos"
+            (is (seq error-handler-infos))
+            (doseq [{:keys [error jwt request]} error-handler-infos]
+              (is (= :jwt_revoked error) error)
+              (is (map? request) request)
+              (is (map? jwt) jwt)))))
+      (testing "never revoke"
+        (is (= 200 (:status (ring-fn-2 req))))
+        (is (= "foo@bar.com"
+               (:body (ring-fn-2 req)))))))
   (testing "post jwt transformation test"
     (let [post-transform (fn [m] {:user {:id (:sub m)}
                                   :org {:id (:foo m)}})
