@@ -203,35 +203,34 @@
     (is (= [] @log-events))
     (reset-log-events))
 
-  (with-redefs
-    [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
-    (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
+  (testing "expiration message"
+    (testing "expired time"
+      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)"
+            tst-fn (fn [d expected]
+                     (with-redefs
+                       [time/now (constantly d)]
+                       (is (= [(format explain-msg expected)]
+                              (vec (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))))]
+        (tst-fn (time/date-time 2017 02 16 14 14 11) "1s")
+        (tst-fn (time/date-time 2017 02 16 15 14 10 0) "1h")
+        (tst-fn (time/date-time 2017 02 17 15 14 10 0) "1 day 1h")
+        (tst-fn (time/date-time 2017 02 18 15 14 10 0) "2 days 1h")
+        (tst-fn (time/date-time 2019 04 03 8 24 5 123) "2 years 45 days 18h 9min 55s")
+        (with-redefs
+          [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
+          (is (= [(format explain-msg "1s")]
+                 (vec (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil test-log-fn)))
+              "Default maximal JWT lifetime should be set to 1 day"))))
 
-  (with-redefs
-    [time/now (constantly (time/date-time 2017 02 16 15 14 10 0))]
-    (is (= '("This JWT has expired since 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
-
-  (with-redefs
-    [time/now (constantly (time/date-time 2017 02 17 15 14 10 0))]
-    (is (= '("This JWT has expired since 1 day 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
-
-  (with-redefs
-    [time/now (constantly (time/date-time 2017 02 18 15 14 10 0))]
-    (is (= '("This JWT has expired since 2 days 1h (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
-
-  (with-redefs
-    [time/now (constantly (time/date-time 2019 04 03 8 24 5 123))]
-    (is (= '("This JWT has expired since 2 years 45 days 18h 9min 55s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))
-
-  (with-redefs
-    [time/now (constantly (time/date-time 2017 02 16 14 14 11))]
-    (is (= '("This JWT has expired since 1s (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)")
-           (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil test-log-fn)))))
+    (testing "max lifetime"
+      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than %s; we only checked creation date and not maximal expiration date)"
+            tst-fn (fn [d max-lifetime expected expected-max]
+                     (with-redefs
+                       [time/now (constantly d)]
+                       (is (= [(format explain-msg expected expected-max)]
+                              (vec (sut/validate-jwt "jwt" decoded-jwt-2 max-lifetime test-log-fn))))))]
+        (tst-fn (time/date-time 2017 02 16 14 14 11) 86400 "1s" "1 day")
+        (tst-fn (time/date-time 2017 02 16 14 14 11) 86300 "1min 41s" "23h 58min 20s")))))
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
