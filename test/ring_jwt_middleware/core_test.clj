@@ -205,7 +205,7 @@
 
   (testing "expiration message"
     (testing "expired time"
-      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than 1 day; we only checked creation date and not maximal expiration date)"
+      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than 1 day; we only check creation date and not maximal expiration date)"
             tst-fn (fn [d expected]
                      (with-redefs
                        [time/now (constantly d)]
@@ -223,7 +223,7 @@
               "Default maximal JWT lifetime should be set to 1 day"))))
 
     (testing "max lifetime"
-      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than %s; we only checked creation date and not maximal expiration date)"
+      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than %s; we only check creation date and not maximal expiration date)"
             tst-fn (fn [d max-lifetime expected expected-max]
                      (with-redefs
                        [time/now (constantly d)]
