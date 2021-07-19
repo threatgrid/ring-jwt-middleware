@@ -1,4 +1,4 @@
-(defproject threatgrid/ring-jwt-middleware "1.0.2-SNAPSHOT"
+(defproject threatgrid/ring-jwt-middleware "1.0.2"
   :description "A simple middleware to deal with JWT Authentication"
   :pedantic? :abort
   :license {:name "Eclipse Public License - v 1.0"

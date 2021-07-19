@@ -105,12 +105,12 @@
                   (hr-duration (* 1000 before-secs)))
 
           (pos? expired-secs)
-          (format "This JWT has expired since %s (we don't allow JWT older than %s; we only checked creation date and not maximal expiration date)"
+          (format "This JWT has expired %s ago (we don't allow JWT older than %s; we only check creation date and not maximal expiration date)"
                   (hr-duration (* 1000 expired-secs))
                   (hr-duration (* 1000 jwt-max-lifetime-in-sec)))
 
           (pos? expired-lifetime-secs)
-          (format "This JWT max lifetime has expired since %s"
+          (format "This JWT max lifetime has expired %s ago"
                   (hr-duration (* 1000 expired-lifetime-secs)))))
       (format "This JWT doesn't contain the following fields %s"
               (pr-str (set/difference required-fields jwt-keys))))))
