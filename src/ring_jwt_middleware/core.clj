@@ -1,16 +1,11 @@
 (ns ring-jwt-middleware.core
-  (:require [clj-jwt
-             [core :refer :all]
-             [key :refer [public-key]]
-             [json-key-fn :as jkf]]
+  (:require [clj-jwt.core :refer [str->jwt verify]]
+            [clj-jwt.key :refer [public-key]]
+            [clj-momo.lib.clj-time.coerce :as time-coerce]
+            [clj-momo.lib.clj-time.core :as time]
+            [clojure.set :as set]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
-            [clj-momo.lib.clj-time
-             [coerce :as time-coerce]
-             [core :as time]]
-            [clojure
-             [set :as set]
-             [string :as str]]
-            [compojure.api.meta :as meta]
             [ring.util.http-response :as resp]))
 
 (defn gen-uuid []
