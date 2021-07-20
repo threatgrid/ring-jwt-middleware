@@ -1,9 +1,10 @@
 (ns ring-jwt-middleware.core-test
-  (:require [clj-jwt.key :refer [public-key]]
+  (:require [clj-jwt.core :as jwt]
+            [clj-jwt.key :refer [public-key]]
+            [clj-time.coerce :refer [from-long]]
             [clj-momo.lib.clj-time.core :as time]
-            [clojure.test :refer [deftest are is testing use-fixtures join-fixtures]]
-            [ring-jwt-middleware.core :as sut]
-            [schema.core :as s]))
+            [clojure.test :refer [deftest is join-fixtures testing use-fixtures]]
+            [ring-jwt-middleware.core :as sut]))
 
 (defn with-fixed-time
   [f]
@@ -26,9 +27,9 @@
   (let [privkey (clj-jwt.key/private-key
                  (str "resources/cert/" privkey-name ".key") "clojure")]
     (-> input-map
-        clj-jwt.core/jwt
-        (clj-jwt.core/sign :RS256 privkey)
-        clj-jwt.core/to-str)))
+        jwt/jwt
+        (jwt/sign :RS256 privkey)
+        jwt/to-str)))
 
 (def log-events (atom []))
 
@@ -51,7 +52,7 @@
 
 (defn epoch-to-time
   [e]
-  (clj-time.coerce/from-long (* 1000 e)))
+  (from-long (* 1000 e)))
 
 (def input-jwt-token-1
   "a map for creating a sample token with clj-jwt"
