@@ -14,13 +14,6 @@
       (time/date-time 2017 06 30 9 35 2))]
     (f)))
 
-
-(defn with-fixed-uuid
-  [f]
-  (with-redefs
-    [sut/gen-uuid (constantly "00000000-0000-0000-0000-000000000000")]
-    (f)))
-
 (defn make-jwt
   "a useful one liner for easy testing"
   [input-map privkey-name]
@@ -42,11 +35,10 @@
   (reset! log-events []))
 
 (defn with-clean-event-logs [f]
-  (do (reset-log-events)
-      (f)))
+  (reset-log-events)
+  (f))
 
-(use-fixtures :once (join-fixtures [with-fixed-time
-                                    with-fixed-uuid]))
+(use-fixtures :once (join-fixtures [with-fixed-time]))
 
 (use-fixtures :each with-clean-event-logs)
 

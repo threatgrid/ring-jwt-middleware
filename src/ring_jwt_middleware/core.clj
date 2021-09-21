@@ -8,9 +8,6 @@
             [clojure.tools.logging :as log]
             [ring.util.http-response :as resp]))
 
-(defn gen-uuid []
-  (str (java.util.UUID/randomUUID)))
-
 (defn get-jwt
   "get the JWT from a ring request"
   [req]
@@ -241,21 +238,34 @@
                     (pr-str infos))]
     (log/log level txt)))
 
-(defn wrap-jwt-auth-fn
-  "wrap a ring handler with JWT check"
+(defn mk-wrap-authentication
+  "A function building a middleware that will add some fields to the ring request:
+
+  - :jwt that will contain the jwt claims
+  - :identity that will contain an object derived from the JWT claims
+  - :jwt-error if something went wrong
+
+  To build the middleware the configuration is a map with the following fields:
+
+  - pubkey-path ; should contain a path to the public key to be used to verify JWT signature
+  - pubkey-fn ; should contain a function that once called will return the public key
+  - is-revoked-fn ; should be a function that takes a decoded jwt and return true if the jwt is revoked
+  - jwt-check-fn ; should be a function taking a raw JWT string, and a decoded JWT and returns a list of errors or nil if no error is found.
+  - jwt-max-lifetime-in-sec ; maximal lifetime of a JWT in seconds (takes priority over :exp)
+  - post-jwt-format-fn ; a function taking a JWT and returning a data structure representing the identity of a user
+  - structured-log-fn ; a function that will be called to send structured logs should accept a string and a map parameter.
+
+  "
   [{:keys [pubkey-path
            pubkey-fn
            is-revoked-fn
            jwt-check-fn
            jwt-max-lifetime-in-sec
            post-jwt-format-fn
-           no-jwt-handler
-           error-handler
            structured-log-fn]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
          post-jwt-format-fn jwt->user-id
-         no-jwt-handler forbid-no-jwt-header-strategy
          structured-log-fn default-structured-log}}]
   (let [p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
         is-revoked-fn (if (fn? is-revoked-fn)
@@ -263,38 +273,84 @@
                         (do (structured-log-fn
                              "is-revoked-fn is not a function! no-revocation-strategy is used."
                              {:level :error})
-                            no-revocation-strategy))
-        handle-error (or error-handler default-error-handler)]
+                            no-revocation-strategy))]
+    (fn [handler]
+      (fn [request]
+        (let [authentication-result
+              (if-let [raw-jwt (get-jwt request)]
+                (if-let [jwt (decode raw-jwt p-fn structured-log-fn)]
+                  (if-let [validation-errors
+                           (validate-jwt raw-jwt
+                                         jwt
+                                         jwt-max-lifetime-in-sec
+                                         jwt-check-fn
+                                         structured-log-fn)]
+                    {:jwt-error
+                     {:error :jwt_validation_error
+                      :error_description "JWT validation error"
+                      :errors validation-errors
+                      :jwt jwt}}
+                    (if (try (is-revoked-fn jwt)
+                             (catch Exception e
+                               (structured-log-fn "is-revoked-fn thrown an exception for"
+                                                  {:level :error
+                                                   :jwt jwt})
+                               (throw e)))
+                      {:jwt-error {:error :jwt_revoked
+                                   :jwt jwt}}
+                      {:identity (post-jwt-format-fn jwt)
+                       :jwt jwt}))
+                  {:jwt-error {:error :bad_signature
+                               :error_description "Bad JWT Signature"
+                               :raw-jwt raw-jwt}})
+                {:jwt-error {:error :no_jwt
+                             :error_description "No JWT found in HTTP headers"}})]
+          (handler (into request authentication-result)))))))
+
+(defn mk-wrap-authorization
+  "A function building a middleware taking care of the authorization logic.
+
+  It must be used in conjunction with `mk-wrap-authentication`.
+
+  The configuration is map containing two handlers.
+
+  - no-jwt-handler => a function that will take a handler and return a new web handler.
+                      This will be used when no JWT is present.
+  - error-handler => a function taking a string and a maps that should return a ring response.
+  "
+  [{:keys [no-jwt-handler
+           error-handler]
+    :or {no-jwt-handler forbid-no-jwt-header-strategy}}]
+  (let [handle-error (or error-handler default-error-handler)]
     (fn [handler]
       (let [no-jwt-fn (no-jwt-handler handler)]
-        (fn [request]
-          (if-let [raw-jwt (get-jwt request)]
-            (if-let [jwt (decode raw-jwt p-fn structured-log-fn)]
-              (if-let [validation-errors
-                       (validate-jwt raw-jwt
-                                     jwt
-                                     jwt-max-lifetime-in-sec
-                                     jwt-check-fn
-                                     structured-log-fn)]
-                (handle-error (format "(%s) %s"
-                                      (or (jwt->user-id jwt) "Unknown User ID")
-                                      (str/join ", " validation-errors))
-                              {:jwt jwt
-                               :error :jwt_validation_error
-                               :errors validation-errors})
-                (if (try (is-revoked-fn jwt)
-                         (catch Exception e
-                           (structured-log-fn "is-revoked-fn thrown an exception for"
-                                              {:level :error
-                                               :jwt jwt})
-                           (throw e)))
-                  (handle-error (format "JWT revoked for %s"
-                                        (or (jwt->user-id jwt) "Unknown User ID"))
-                                {:jwt jwt
-                                 :error :jwt_revoked})
-                  (handler (assoc request
-                                  :identity (post-jwt-format-fn jwt)
-                                  :jwt jwt))))
+        (fn [{{:keys [jwt raw-jwt errors error] :as jwt-error} :jwt-error
+              :as request}]
+          (if jwt-error
+            (case error
+              :no_jwt (no-jwt-fn request)
+
+              :bad_signature
               (handle-error "Invalid Authorization Header (couldn't verify the JWT signature)"
-                            {:authorization-header (str "Bearer:" raw-jwt)}))
-            (no-jwt-fn request)))))))
+                            {:authorization-header (str "Bearer:" raw-jwt)})
+
+              :jwt_revoked
+              (handle-error (format "JWT revoked for %s"
+                                    (or (jwt->user-id jwt) "Unknown User ID"))
+                            {:jwt jwt
+                             :error :jwt_revoked})
+              :jwt_validation_error
+              (handle-error (format "(%s) %s"
+                                    (or (jwt->user-id jwt) "Unknown User ID")
+                                    (str/join ", " errors ))
+                            {:jwt jwt
+                             :error :jwt_validation_error
+                             :errors errors}))
+            (handler request)))))))
+
+(defn wrap-jwt-auth-fn
+  "wrap a ring handler with JWT check both authentication and authorization mixed"
+  [conf]
+  (let [wrap-authentication (mk-wrap-authentication conf)
+        wrap-authorization (mk-wrap-authorization conf)]
+    (comp wrap-authentication wrap-authorization)))
