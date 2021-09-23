@@ -2,26 +2,33 @@
   (:require [clj-jwt.core :refer [str->jwt verify]]
             [clj-jwt.key :refer [public-key]]
             [clojure.set :as set]
-            [clojure.string :as str]
+            [clojure.string :as string]
             [clojure.tools.logging :as log]
             [ring.util.http-response :as resp]))
 
-(defn get-jwt
-  "get the JWT from a ring request"
-  [req]
-  (some->> (get-in req [:headers "authorization"])
-           (re-seq #"^Bearer\s+(.*)$")
-           first
-           second))
 
-(defn ->err [m]
-  {:jwt-error m})
+(defn ->err [err-code err-description error-metas]
+  {:jwt-error(into error-metas
+                   {:error err-code
+                    :error_description err-description})})
 
 (defn error? [m]
   (boolean (get m :jwt-error)))
 
 (defn success? [m]
   (not (error? m)))
+
+
+(defn get-jwt
+  "get the JWT from a ring request"
+  [req]
+  (if-let [raw-jwt
+           (or (some->> (get-in req [:headers "authorization"])
+                        (re-seq #"^Bearer\s+(.*)$")
+                        first
+                        second))]
+    {:raw-jwt raw-jwt}
+    (->err :no_jwt "No JWT found in HTTP headers" {})))
 
 (defn decode
   "Given a JWT return an Auth hash-map"
@@ -31,26 +38,22 @@
       (if-let [pubkey (pubkey-fn (:claims jwt))]
         (if (verify jwt :RS256 pubkey)
           {:jwt (:claims jwt)}
-          (->err {:error :jwt_invalid_signature
-                  :error_description "Invalid Signature"
-                  :level :warn
-                  :jwt jwt
-                  :token token}))
-        (->err
-         {:error :jwt_public_key_not_found
-          :error_description (str "Cannot retrieve a key for your JWT."
-                                  " One common reason would be that it has the wrong `iss` claim")
-          :jwt jwt
-          :level :warn
-          :token token})))
+          (->err :jwt_invalid_signature "Invalid Signature" {:level :warn
+                                                             :jwt jwt
+                                                             :token token}))
+        (->err :jwt_public_key_not_found
+               (str "Cannot retrieve a key for your JWT."
+                    " One common reason would be that it has the wrong `iss` claim")
+               {:jwt jwt
+                :level :warn
+                :token token})))
     (catch Exception e
-      (->err
-       {:error :jwt_decode_failed_exception
-        :error_description "JWT decode failed"
-        :exception_message (.getMessage e)
-        :token token
-        :level :warn
-        :exception e}))))
+      (->err :jwt_decode_failed_exception
+             "JWT decode failed"
+             {:exception_message (.getMessage e)
+              :token token
+              :level :warn
+              :exception e}))))
 
 (defn hr-duration
   "Given a duration in ms,
@@ -81,7 +84,7 @@
           (when (pos? nb-ms)
             (str nb-ms "ms")))
          (remove nil?)
-         (str/join " "))))
+         (string/join " "))))
 
 (defn current-epoch! []
   (quot (System/currentTimeMillis) 1000))
@@ -103,31 +106,37 @@
       (let [now                   (current-epoch!)
             expired-secs          (- now (+ (:iat jwt 0) jwt-max-lifetime-in-sec))
             before-secs           (- (:nbf jwt) now)
-            expired-lifetime-secs (- now (:exp jwt 0))]
+            expired-lifetime-secs (- now (:exp jwt 0))
+            err-metas             {:jwt jwt :now now}]
         (cond
           (pos? before-secs)
-          (format "This JWT will be valid in %s"
-                  (hr-duration (* 1000 before-secs)))
-
+          (->err :jwt_valid_in_future
+                 (format "This JWT will be valid in %s"
+                         (hr-duration (* 1000 before-secs)))
+                 err-metas)
           (pos? expired-secs)
-          (format "This JWT has expired %s ago (we don't allow JWT older than %s; we only check creation date and not maximal expiration date)"
-                  (hr-duration (* 1000 expired-secs))
-                  (hr-duration (* 1000 jwt-max-lifetime-in-sec)))
-
+          (->err :jwt_expired_via_max_jwt_lifetime
+                 (format (str "This JWT has expired %s ago (we don't allow JWT older than %s;"
+                              " we only check creation date and not maximal expiration date)")
+                         (hr-duration (* 1000 expired-secs))
+                         (hr-duration (* 1000 jwt-max-lifetime-in-sec)))
+                 err-metas)
           (pos? expired-lifetime-secs)
-          (format "This JWT max lifetime has expired %s ago"
-                  (hr-duration (* 1000 expired-lifetime-secs)))))
-      (format "This JWT doesn't contain the following fields %s"
-              (pr-str (set/difference required-fields jwt-keys))))))
+          (->err :jwt_expired
+                 (format "This JWT max lifetime has expired %s ago"
+                         (hr-duration (* 1000 expired-lifetime-secs)))
+                 err-metas)))
+      (->err :jwt_missing_field
+             (format "This JWT doesn't contain the following fields %s"
+                     (pr-str (set/difference required-fields jwt-keys)))
+             {:jwt jwt}))))
 
 (defn default-error-handler
   "Return an `unauthorized` HTTP response
   and log the error along debug infos"
-  [error-msg infos]
-  (let [err {:error :invalid_jwt
-             :error_description error-msg}]
-    (log/info error-msg (pr-str (into infos err)))
-    (resp/unauthorized err)))
+  [{:keys [error error_description] :as error-data}]
+  (log/infof "%s: %s %s" error error_description (dissoc error-data :error :error_description :raw_jwt))
+  (resp/unauthorized (dissoc error-data :raw_jwt)))
 
 (def default-jwt-lifetime-in-sec 86400)
 
@@ -141,20 +150,25 @@
     jwt-max-lifetime-in-sec
     jwt-check-fn
     log-fn]
-   (let [exp-vals [(check-jwt-expiry jwt
-                                     (or jwt-max-lifetime-in-sec
-                                         default-jwt-lifetime-in-sec))]
-         checks (if (fn? jwt-check-fn)
-                  (or (try (seq (jwt-check-fn raw-jwt jwt))
-                           (catch Exception e
-                             (log-fn "jwt-check-fn thrown an exception on"
-                                     {:level :error
-                                      :jwt jwt})
-                             (throw e)))
+   (let [expiry-check-result (check-jwt-expiry jwt (or jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec))]
+     (if (error? expiry-check-result)
+       expiry-check-result
+       (let [checks (if (fn? jwt-check-fn)
+                      (or (try (seq (jwt-check-fn raw-jwt jwt))
+                               (catch Exception e
+                                 (log-fn "jwt-check-fn thrown an exception on"
+                                         {:level :error
+                                          :raw-jwt raw-jwt
+                                          :jwt jwt})
+                                 (throw e)))
+                          [])
                       [])
-                  [])]
-     (seq (remove nil?
-                  (concat checks exp-vals)))))
+             returned-errors (seq (remove nil? checks))]
+         (when returned-errors
+           (->err :jwt_custom_check_fail
+                  (string/join ", " returned-errors)
+                  {:jwt jwt
+                   :raw-jwt raw-jwt}))))))
 
   ([raw-jwt jwt jwt-max-lifetime-in-sec log-fn]
    (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil log-fn)))
@@ -228,12 +242,12 @@
         str-to-path (fn [k]
                       (-> k ;; the key of the jwt map that starts with prefix
                           (subs n) ;; remove the prefix
-                          (str/split #"/") ;; split on /
+                          (string/split #"/") ;; split on /
                           ;; finally keywordize all elements
                           keywordize))
         tmp (->> jwt
                  (map (fn [[k v]]
-                        (when (and (string? k) (str/starts-with? k prefix))
+                        (when (and (string? k) (string/starts-with? k prefix))
                           [(str-to-path k) v])))
                  (remove nil?) ;; remove key not starting by prefix
                  (reduce (fn [acc [kl v]] (assoc-in acc kl v)) {}) ;; construct the hash-map
@@ -290,33 +304,29 @@
     (fn [handler]
       (fn [request]
         (let [authentication-result
-              (if-let [raw-jwt (get-jwt request)]
-                (let [{:keys [jwt jwt-error] :as decoded} (decode raw-jwt p-fn)]
-                  (if (success? decoded)
-                    (if-let [validation-errors
-                             (validate-jwt raw-jwt
-                                           jwt
-                                           jwt-max-lifetime-in-sec
-                                           jwt-check-fn
-                                           structured-log-fn)]
-                      (->err
-                       {:error :jwt_validation_error
-                        :error_description "JWT validation error"
-                        :errors validation-errors
-                        :jwt jwt})
-                      (if (try (is-revoked-fn jwt)
-                               (catch Exception e
-                                 (log/error "is-revoked-fn thrown an exception for"
-                                            {:level :error
-                                             :jwt jwt})
-                                 (throw e)))
-                        (->err {:error :jwt_revoked
-                                :jwt jwt})
-                        {:identity (post-jwt-format-fn jwt)
-                         :jwt jwt}))
-                    jwt-error))
-                (->err {:error :no_jwt
-                        :error_description "No JWT found in HTTP headers"}))]
+              (let [{:keys [raw-jwt] :as get-jwt-result} (get-jwt request)]
+                (if (error? get-jwt-result)
+                  get-jwt-result
+                  (let [{:keys [jwt] :as decoded-result} (decode raw-jwt p-fn)]
+                    (if (error? decoded-result)
+                      decoded-result
+                      (let [validation-result
+                            (validate-jwt raw-jwt
+                                          jwt
+                                          jwt-max-lifetime-in-sec
+                                          jwt-check-fn
+                                          structured-log-fn)]
+                        (if (error? validation-result)
+                          validation-result
+                          (if (try (is-revoked-fn jwt)
+                                   (catch Exception e
+                                     (log/error "is-revoked-fn thrown an exception for"
+                                                {:level :error
+                                                 :jwt jwt})
+                                     (throw e)))
+                            (->err :jwt_revoked "JWT is revoked" {:jwt jwt})
+                            {:identity (post-jwt-format-fn jwt)
+                             :jwt jwt})))))))]
           (handler (into request authentication-result)))))))
 
 (defn mk-wrap-authorization
@@ -336,28 +346,12 @@
   (let [handle-error (or error-handler default-error-handler)]
     (fn [handler]
       (let [no-jwt-fn (no-jwt-handler handler)]
-        (fn [{{:keys [jwt raw-jwt errors error] :as jwt-error} :jwt-error
+        (fn [{{:keys [error] :as jwt-error} :jwt-error
               :as request}]
           (if jwt-error
-            (case error
-              :no_jwt (no-jwt-fn request)
-
-              :bad_signature
-              (handle-error "Invalid Authorization Header (couldn't verify the JWT signature)"
-                            {:authorization-header (str "Bearer:" raw-jwt)})
-
-              :jwt_revoked
-              (handle-error (format "JWT revoked for %s"
-                                    (or (jwt->user-id jwt) "Unknown User ID"))
-                            {:jwt jwt
-                             :error :jwt_revoked})
-              :jwt_validation_error
-              (handle-error (format "(%s) %s"
-                                    (or (jwt->user-id jwt) "Unknown User ID")
-                                    (str/join ", " errors ))
-                            {:jwt jwt
-                             :error :jwt_validation_error
-                             :errors errors}))
+            (if (= :no_jwt error)
+              (no-jwt-fn request)
+              (handle-error jwt-error))
             (handler request)))))))
 
 (defn wrap-jwt-auth-fn

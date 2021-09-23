@@ -146,28 +146,25 @@
 
 (deftest decode-test
   (is (= decoded-jwt-1
-         (sut/decode jwt-token-1 (constantly pubkey1) test-log-fn)))
+         (:jwt (sut/decode jwt-token-1 (constantly pubkey1)))))
   (is (= [] @log-events))
-  (is (nil? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1) test-log-fn)))
-
-  (is (= "Invalid signature" (:msg (first @log-events))))
-  (is (= :warn (:level (:infos (first @log-events)))))
-  (is (= {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
-          :exp 1499419023
-          :iat 1498814223
-          :nbf 1498813923
-          :sub "foo@bar.com"
-          :iss "TEST-ISSUER-1"
-          :user-identifier "foo@bar.com"
-          :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
-          :foo "bar"}
-         (get-in (first @log-events) [:infos :jwt :claims]))))
+  (is (sut/error? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))))
+  (is (= {:error :jwt_invalid_signature, :error_description "Invalid Signature"}
+         (-> (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))
+             :jwt-error
+             (select-keys [:error :error_description])))))
 
 (deftest validate-errors-test
   (is (nil? (sut/validate-jwt "jwt" decoded-jwt-1 86400 test-log-fn)))
-  (is (= '("This JWT doesn't contain the following fields #{:exp :nbf :iat}")
+  (is (= {:jwt-error {:jwt {}
+                      :error :jwt_missing_field
+                      :error_description
+                      "This JWT doesn't contain the following fields #{:exp :nbf :iat}"}}
          (sut/validate-jwt "jwt" {} 86400 test-log-fn)))
-  (is (= '("This JWT doesn't contain the following fields #{:exp :nbf}")
+  (is (= {:jwt-error {:jwt {:user-identifier "foo@bar.com", :iat 1487168050},
+                      :error :jwt_missing_field,
+                      :error_description
+                      "This JWT doesn't contain the following fields #{:exp :nbf}"}}
          (sut/validate-jwt "jwt" {:user-identifier "foo@bar.com"
                             :iat 1487168050} 86400 test-log-fn)))
   (testing "check-fn throw an exception"
@@ -196,7 +193,19 @@
     (reset-log-events))
 
   (testing "check-fn fail by using the raw-jwt"
-    (is (= ["jwt"]
+    (is (= {:jwt-error
+            {:jwt
+             {:user-identifier "foo@bar.com",
+              :sub "foo@bar.com",
+              :iss "TEST-ISSUER-1",
+              :exp 1499419023,
+              :jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
+              :nbf 1498813923,
+              :foo "bar",
+              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
+              :iat 1498814223},
+             :error :jwt_custom_check_fail,
+             :error_description "jwt"}}
            (try
              (sut/validate-jwt "jwt"
                                decoded-jwt-1
@@ -213,8 +222,10 @@
             tst-fn (fn [d expected]
                      (with-redefs
                        [sut/current-epoch! d]
-                       (is (= [(format explain-msg expected)]
-                              (vec (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))))]
+                       (is (= (format explain-msg expected)
+                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn)
+                                  :jwt-error
+                                  :error_description)))))]
         (tst-fn (const-d 2017 02 16 14 14 11) "1s")
         (tst-fn (const-d 2017 02 16 15 14 10 0) "1h")
         (tst-fn (const-d 2017 02 17 15 14 10 0) "1 day 1h")
@@ -222,8 +233,10 @@
         (tst-fn (const-d 2019 04 03 8 24 5 123) "2 years 45 days 18h 9min 55s")
         (with-redefs
           [sut/current-epoch! (const-d 2017 02 16 14 14 11)]
-          (is (= [(format explain-msg "1s")]
-                 (vec (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil test-log-fn)))
+          (is (= (format explain-msg "1s")
+                 (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil test-log-fn)
+                     :jwt-error
+                     :error_description))
               "Default maximal JWT lifetime should be set to 1 day"))))
 
     (testing "max lifetime"
@@ -231,18 +244,21 @@
             tst-fn (fn [d max-lifetime expected expected-max]
                      (with-redefs
                        [sut/current-epoch! d]
-                       (is (= [(format explain-msg expected expected-max)]
-                              (vec (sut/validate-jwt "jwt" decoded-jwt-2 max-lifetime test-log-fn))))))]
+                       (is (= (format explain-msg expected expected-max)
+                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 max-lifetime test-log-fn)
+                                  :jwt-error :error_description)))))]
         (tst-fn (const-d 2017 02 16 14 14 11) 86400 "1s" "1 day")
         (tst-fn (const-d 2017 02 16 14 14 11) 86300 "1min 41s" "23h 58min 20s")))))
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
-    (is (= "foo"
+    (is (= {:raw-jwt "foo"}
            (sut/get-jwt {:headers {"authorization" "Bearer foo"}}))))
   (testing "get-jwt requests without no JWT"
-    (is (nil? (sut/get-jwt {:headers {"authorization" "Bearer"}})))
-    (is (nil? (sut/get-jwt {:headers {"bad" "Bearer foo"}})))))
+    (is (= {:jwt-error {:error :no_jwt, :error_description "No JWT found in HTTP headers"}}
+           (sut/get-jwt {:headers {"authorization" "Bearer"}})))
+    (is (= {:jwt-error {:error :no_jwt, :error_description "No JWT found in HTTP headers"}}
+           (sut/get-jwt {:headers {"bad" "Bearer foo"}})))))
 
 (deftest wrap-jwt-auth-fn-test
   (testing "basic usage"
