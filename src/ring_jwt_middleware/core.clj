@@ -14,31 +14,43 @@
            first
            second))
 
+(defn ->err [m]
+  {:jwt-error m})
+
+(defn error? [m]
+  (boolean (get m :jwt-error)))
+
+(defn success? [m]
+  (not (error? m)))
+
 (defn decode
   "Given a JWT return an Auth hash-map"
-  [token pubkey-fn log-fn]
+  [token pubkey-fn]
   (try
     (let [jwt (str->jwt token)]
       (if-let [pubkey (pubkey-fn (:claims jwt))]
         (if (verify jwt :RS256 pubkey)
-          (:claims jwt)
-          (do (log-fn "Invalid signature"
-                      {:level :warn
-                       :jwt jwt
-                       :token token})
-              nil))
-        (do (log-fn (str "Cannot retrieve a key for your JWT."
-                         " One common reason would be that it has the wrong `iss` claim")
-                    {:level :warn
-                     :jwt jwt
-                     :token token})
-            nil)))
+          {:jwt (:claims jwt)}
+          (->err {:error :jwt_invalid_signature
+                  :error_description "Invalid Signature"
+                  :level :warn
+                  :jwt jwt
+                  :token token}))
+        (->err
+         {:error :jwt_public_key_not_found
+          :error_description (str "Cannot retrieve a key for your JWT."
+                                  " One common reason would be that it has the wrong `iss` claim")
+          :jwt jwt
+          :level :warn
+          :token token})))
     (catch Exception e
-      (log-fn "JWT decode failed:"
-              {:exception_message (.getMessage e)
-               :token token
-               :level :warn})
-      nil)))
+      (->err
+       {:error :jwt_decode_failed_exception
+        :error_description "JWT decode failed"
+        :exception_message (.getMessage e)
+        :token token
+        :level :warn
+        :exception e}))))
 
 (defn hr-duration
   "Given a duration in ms,
@@ -279,33 +291,32 @@
       (fn [request]
         (let [authentication-result
               (if-let [raw-jwt (get-jwt request)]
-                (if-let [jwt (decode raw-jwt p-fn structured-log-fn)]
-                  (if-let [validation-errors
-                           (validate-jwt raw-jwt
-                                         jwt
-                                         jwt-max-lifetime-in-sec
-                                         jwt-check-fn
-                                         structured-log-fn)]
-                    {:jwt-error
-                     {:error :jwt_validation_error
-                      :error_description "JWT validation error"
-                      :errors validation-errors
-                      :jwt jwt}}
-                    (if (try (is-revoked-fn jwt)
-                             (catch Exception e
-                               (structured-log-fn "is-revoked-fn thrown an exception for"
-                                                  {:level :error
-                                                   :jwt jwt})
-                               (throw e)))
-                      {:jwt-error {:error :jwt_revoked
-                                   :jwt jwt}}
-                      {:identity (post-jwt-format-fn jwt)
-                       :jwt jwt}))
-                  {:jwt-error {:error :bad_signature
-                               :error_description "Bad JWT Signature"
-                               :raw-jwt raw-jwt}})
-                {:jwt-error {:error :no_jwt
-                             :error_description "No JWT found in HTTP headers"}})]
+                (let [{:keys [jwt jwt-error] :as decoded} (decode raw-jwt p-fn)]
+                  (if (success? decoded)
+                    (if-let [validation-errors
+                             (validate-jwt raw-jwt
+                                           jwt
+                                           jwt-max-lifetime-in-sec
+                                           jwt-check-fn
+                                           structured-log-fn)]
+                      (->err
+                       {:error :jwt_validation_error
+                        :error_description "JWT validation error"
+                        :errors validation-errors
+                        :jwt jwt})
+                      (if (try (is-revoked-fn jwt)
+                               (catch Exception e
+                                 (log/error "is-revoked-fn thrown an exception for"
+                                            {:level :error
+                                             :jwt jwt})
+                                 (throw e)))
+                        (->err {:error :jwt_revoked
+                                :jwt jwt})
+                        {:identity (post-jwt-format-fn jwt)
+                         :jwt jwt}))
+                    jwt-error))
+                (->err {:error :no_jwt
+                        :error_description "No JWT found in HTTP headers"}))]
           (handler (into request authentication-result)))))))
 
 (defn mk-wrap-authorization

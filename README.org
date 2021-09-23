@@ -10,8 +10,8 @@ currently, only RS256 is supported.
 - RS256 signing
 - uses IANA "JSON Web Token Claims"
 - JWT lifetime & Expiration support
-- custom additional validation through a user provided fn
-- custom revokation check through a user provided fn
+- custom additional validation through a user provided functions
+- custom revocation check through a user provided functions
 
 ** Usage
 
