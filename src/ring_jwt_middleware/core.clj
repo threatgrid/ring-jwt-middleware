@@ -1,8 +1,6 @@
 (ns ring-jwt-middleware.core
   (:require [clj-jwt.core :refer [str->jwt verify]]
             [clj-jwt.key :refer [public-key]]
-            [clj-momo.lib.clj-time.coerce :as time-coerce]
-            [clj-momo.lib.clj-time.core :as time]
             [clojure.set :as set]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
@@ -73,11 +71,14 @@
          (remove nil?)
          (str/join " "))))
 
+(defn current-epoch! []
+  (quot (System/currentTimeMillis) 1000))
+
 (defn jwt-expiry-ms
   "Given a JWT and a lifetime,
    calculate when it expired"
   [jwt-created jwt-max-lifetime-in-sec]
-  (- (time-coerce/to-epoch (time/now))
+  (- (current-epoch!)
      (+ jwt-created
         jwt-max-lifetime-in-sec)))
 
@@ -85,11 +86,11 @@
   "Return a string if JWT expiration check fails, nil otherwise"
   [jwt jwt-max-lifetime-in-sec]
   (let [required-fields #{:nbf :exp :iat}
-        jwt-keys (set (keys jwt))]
+        jwt-keys        (set (keys jwt))]
     (if (set/subset? required-fields jwt-keys)
-      (let [now (time-coerce/to-epoch (time/now))
-            expired-secs (- now (+ (:iat jwt 0) jwt-max-lifetime-in-sec))
-            before-secs (- (:nbf jwt) now)
+      (let [now                   (current-epoch!)
+            expired-secs          (- now (+ (:iat jwt 0) jwt-max-lifetime-in-sec))
+            before-secs           (- (:nbf jwt) now)
             expired-lifetime-secs (- now (:exp jwt 0))]
         (cond
           (pos? before-secs)
@@ -148,7 +149,7 @@
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
-  [handler]
+  [_handler]
   (constantly
    (resp/unauthorized {:error :invalid_request
                        :error_description "No Authorization Header"})))
