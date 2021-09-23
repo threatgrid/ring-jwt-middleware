@@ -1,9 +1,8 @@
 (ns ring-jwt-middleware.core-test
   (:require [clj-jwt.core :as jwt]
+            [clj-jwt.intdate :refer [intdate->joda-time]]
             [clj-jwt.key :refer [public-key]]
-            [clj-time.coerce :refer [from-long]]
-            [clj-momo.lib.clj-time.core :as time]
-            [clj-momo.lib.clj-time.coerce :refer [to-epoch]]
+            [java-time :as jt]
             [clojure.test :refer [deftest is join-fixtures testing use-fixtures]]
             [ring-jwt-middleware.core :as sut]))
 
@@ -41,9 +40,22 @@
 
 (use-fixtures :each with-clean-event-logs)
 
-(defn epoch-to-time
-  [e]
-  (from-long (* 1000 e)))
+(def epoch-to-time intdate->joda-time)
+
+(defn to-epoch
+  "local date time to UTC-0 epoch in s"
+  [d]
+  (quot
+   (jt/to-millis-from-epoch
+    (jt/zoned-date-time d (jt/zone-id "UTC" (jt/zone-offset 0))))
+   1000))
+
+(defn const-d
+  [& args]
+  (constantly (to-epoch (apply jt/local-date-time args))))
+
+
+(jt/available-zone-ids)
 
 (def input-jwt-token-1
   "a map for creating a sample token with clj-jwt"
@@ -200,16 +212,16 @@
       (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than 1 day; we only check creation date and not maximal expiration date)"
             tst-fn (fn [d expected]
                      (with-redefs
-                       [sut/current-epoch! (constantly (to-epoch d))]
+                       [sut/current-epoch! d]
                        (is (= [(format explain-msg expected)]
                               (vec (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn))))))]
-        (tst-fn (time/date-time 2017 02 16 14 14 11) "1s")
-        (tst-fn (time/date-time 2017 02 16 15 14 10 0) "1h")
-        (tst-fn (time/date-time 2017 02 17 15 14 10 0) "1 day 1h")
-        (tst-fn (time/date-time 2017 02 18 15 14 10 0) "2 days 1h")
-        (tst-fn (time/date-time 2019 04 03 8 24 5 123) "2 years 45 days 18h 9min 55s")
+        (tst-fn (const-d 2017 02 16 14 14 11) "1s")
+        (tst-fn (const-d 2017 02 16 15 14 10 0) "1h")
+        (tst-fn (const-d 2017 02 17 15 14 10 0) "1 day 1h")
+        (tst-fn (const-d 2017 02 18 15 14 10 0) "2 days 1h")
+        (tst-fn (const-d 2019 04 03 8 24 5 123) "2 years 45 days 18h 9min 55s")
         (with-redefs
-          [sut/current-epoch! (constantly (to-epoch (time/date-time 2017 02 16 14 14 11)))]
+          [sut/current-epoch! (const-d 2017 02 16 14 14 11)]
           (is (= [(format explain-msg "1s")]
                  (vec (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil test-log-fn)))
               "Default maximal JWT lifetime should be set to 1 day"))))
@@ -218,11 +230,11 @@
       (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than %s; we only check creation date and not maximal expiration date)"
             tst-fn (fn [d max-lifetime expected expected-max]
                      (with-redefs
-                       [sut/current-epoch! (constantly (to-epoch d))]
+                       [sut/current-epoch! d]
                        (is (= [(format explain-msg expected expected-max)]
                               (vec (sut/validate-jwt "jwt" decoded-jwt-2 max-lifetime test-log-fn))))))]
-        (tst-fn (time/date-time 2017 02 16 14 14 11) 86400 "1s" "1 day")
-        (tst-fn (time/date-time 2017 02 16 14 14 11) 86300 "1min 41s" "23h 58min 20s")))))
+        (tst-fn (const-d 2017 02 16 14 14 11) 86400 "1s" "1 day")
+        (tst-fn (const-d 2017 02 16 14 14 11) 86300 "1min 41s" "23h 58min 20s")))))
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
@@ -247,7 +259,7 @@
           req-no-header {}
           req-auth-header-not-jwt {:headers {"authorization"
                                              "api-key 1234-1234-1234-1234"}}]
-      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
+      (with-redefs [sut/current-epoch! (const-d 2017 06 30 11 32 10)]
         (let [response-1 (ring-fn-1 req-1)
               response-2 (ring-fn-2 req-1)
               response-no-header (ring-fn-1 req-no-header)
@@ -261,10 +273,10 @@
           (is (= 401 (:status response-auth-header-not-jwt)))))
       (testing "The JWT should be expired after 24h"
         (is (= 401
-               (with-redefs [sut/current-epoch! (constantly (to-epoch (time/date-time 2017 07 1 9 17 4)))]
+               (with-redefs [sut/current-epoch! (const-d 2017 07 1 9 17 4)]
                  (:status (ring-fn-1 req-1)))))
         (is (= 200
-               (with-redefs [sut/current-epoch! (constantly (to-epoch (time/date-time 2017 07 1 9 17 3)))]
+               (with-redefs [sut/current-epoch! (const-d 2017 07 1 9 17 3)]
                  (:status (ring-fn-1 req-1))))))))
   (testing "multiple keys support"
     (let [pubkey-fn (fn [claims]
@@ -284,7 +296,7 @@
 
           req-3 {:headers {"authorization"
                            (str "Bearer " jwt-token-3)}}]
-      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
+      (with-redefs [sut/current-epoch! (const-d 2017 06 30 11 32 10)]
         (let [response-1 (ring-fn-1 req-1)
               response-2 (ring-fn-2 req-1)
               response-3 (ring-fn-1 req-2)
@@ -309,7 +321,7 @@
           req-bad-jwt {:headers {"authorization"
                                  (str "Bearer x" jwt-token-1)}}
           req-no-header {}]
-      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
+      (with-redefs [sut/current-epoch! (const-d 2017 06 30 11 32 10)]
         (let [response-1 (ring-fn-1 req-1)
               response-2 (ring-fn-2 req-1)
               response-no-header (ring-fn-1 req-no-header)]
@@ -322,10 +334,10 @@
           (is (= nil (:body   response-no-header)))))
       (testing "The JWT should be expired after 24h"
         (is (= 401
-               (with-redefs [sut/current-epoch! (constantly (to-epoch (time/date-time 2017 07 1 9 17 4)))]
+               (with-redefs [sut/current-epoch! (const-d 2017 07 1 9 17 4)]
                  (:status (ring-fn-1 req-1)))))
         (is (= 200
-               (with-redefs [sut/current-epoch! (constantly (to-epoch (time/date-time 2017 07 1 9 17 3)))]
+               (with-redefs [sut/current-epoch! (const-d 2017 07 1 9 17 3)]
                  (:status (ring-fn-1 req-1))))))))
   (testing "Manual No Auth Header strategy test"
     (let [wrap-dummy-id (fn [handler]
@@ -341,7 +353,7 @@
           req-no-header {}
           req-auth-header-not-jwt {:headers {"authorization"
                                              "api-key 1234-1234-1234-1234"}}]
-      (with-redefs [time/now (constantly (time/date-time 2017 06 30 11 32 10))]
+      (with-redefs [sut/current-epoch! (const-d 2017 06 30 11 32 10)]
         (let [response-no-header (ring-fn req-no-header)
               response-auth-header-not-jwt (ring-fn req-auth-header-not-jwt)]
           (is (= 200 (:status response-no-header)))
@@ -395,7 +407,7 @@
           req {:headers {"authorization"
                          (str "Bearer " jwt-token-1)}}]
       (is (= 401
-             (with-redefs [sut/current-epoch! (constantly (to-epoch (time/date-time 2017 07 1 9 17 4)))]
+             (with-redefs [sut/current-epoch! (const-d 2017 07 1 9 17 4)]
                (:status (ring-fn-1 req))))))))
 
 (deftest jwt->oauth-ids-test

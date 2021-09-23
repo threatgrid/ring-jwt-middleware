@@ -12,4 +12,4 @@
                  [org.clojure/tools.logging "1.0.0"]
                  [metosin/ring-http-response "0.9.1"]]
   :profiles {:dev {:pedantic? :warn
-                   :dependencies [[threatgrid/clj-momo "0.3.5"]]}})
+                   :dependencies [[clojure.java-time "0.3.3"]]}})
