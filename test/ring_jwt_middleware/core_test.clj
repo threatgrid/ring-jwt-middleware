@@ -4,6 +4,7 @@
             [clj-jwt.key :refer [public-key]]
             [java-time :as jt]
             [clojure.test :refer [deftest is join-fixtures testing use-fixtures]]
+            [ring-jwt-middleware.result :as result]
             [ring-jwt-middleware.core :as sut]))
 
 (defn with-fixed-time
@@ -146,16 +147,16 @@
 
 (deftest decode-test
   (is (= decoded-jwt-1
-         (:jwt (sut/decode jwt-token-1 (constantly pubkey1)))))
+         (:jwt (result/<-result (sut/decode jwt-token-1 (constantly pubkey1))))))
   (is (= [] @log-events))
-  (is (sut/error? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))))
+  (is (result/error? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))))
   (is (= {:error :jwt_invalid_signature, :error_description "Invalid Signature"}
          (-> (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))
              :jwt-error
              (select-keys [:error :error_description])))))
 
 (deftest validate-errors-test
-  (is (nil? (sut/validate-jwt "jwt" decoded-jwt-1 86400 test-log-fn)))
+  (is (result/success? (sut/validate-jwt "jwt" decoded-jwt-1 86400 test-log-fn)))
   (is (= {:jwt-error {:jwt {}
                       :error :jwt_missing_field
                       :error_description
@@ -179,6 +180,7 @@
     (is (= [{:msg "jwt-check-fn thrown an exception on",
              :infos
              {:level :error,
+              :raw-jwt "jwt"
               :jwt
               {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
                :exp 1499419023,
@@ -194,7 +196,8 @@
 
   (testing "check-fn fail by using the raw-jwt"
     (is (= {:jwt-error
-            {:jwt
+            {:raw-jwt "jwt"
+             :jwt
              {:user-identifier "foo@bar.com",
               :sub "foo@bar.com",
               :iss "TEST-ISSUER-1",

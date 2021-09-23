@@ -10,6 +10,8 @@
   :dependencies [[org.clojure/clojure "1.10.1"]
                  [threatgrid/clj-jwt "0.3.1"]
                  [org.clojure/tools.logging "1.0.0"]
-                 [metosin/ring-http-response "0.9.1"]]
+                 [metosin/ring-http-response "0.9.1"]
+                 [prismatic/schema "1.1.12"]
+                 [metosin/schema-tools "0.12.3"]]
   :profiles {:dev {:pedantic? :warn
                    :dependencies [[clojure.java-time "0.3.3"]]}})

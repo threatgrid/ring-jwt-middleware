@@ -4,19 +4,9 @@
             [clojure.set :as set]
             [clojure.string :as string]
             [clojure.tools.logging :as log]
-            [ring.util.http-response :as resp]))
-
-
-(defn ->err [err-code err-description error-metas]
-  {:jwt-error(into error-metas
-                   {:error err-code
-                    :error_description err-description})})
-
-(defn error? [m]
-  (boolean (get m :jwt-error)))
-
-(defn success? [m]
-  (not (error? m)))
+            [ring-jwt-middleware.result :refer [->err ->pure error? <-result]]
+            [ring.util.http-response :as resp]
+            [ring-jwt-middleware.result :as result]))
 
 
 (defn get-jwt
@@ -37,7 +27,7 @@
     (let [jwt (str->jwt token)]
       (if-let [pubkey (pubkey-fn (:claims jwt))]
         (if (verify jwt :RS256 pubkey)
-          {:jwt (:claims jwt)}
+          (->pure {:jwt (:claims jwt)})
           (->err :jwt_invalid_signature "Invalid Signature" {:level :warn
                                                              :jwt jwt
                                                              :token token}))
@@ -164,11 +154,12 @@
                           [])
                       [])
              returned-errors (seq (remove nil? checks))]
-         (when returned-errors
+         (if returned-errors
            (->err :jwt_custom_check_fail
                   (string/join ", " returned-errors)
                   {:jwt jwt
-                   :raw-jwt raw-jwt}))))))
+                   :raw-jwt raw-jwt})
+           (->pure true))))))
 
   ([raw-jwt jwt jwt-max-lifetime-in-sec log-fn]
    (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil log-fn)))
@@ -307,10 +298,11 @@
               (let [{:keys [raw-jwt] :as get-jwt-result} (get-jwt request)]
                 (if (error? get-jwt-result)
                   get-jwt-result
-                  (let [{:keys [jwt] :as decoded-result} (decode raw-jwt p-fn)]
+                  (let [decoded-result (decode raw-jwt p-fn)]
                     (if (error? decoded-result)
                       decoded-result
-                      (let [validation-result
+                      (let [{:keys [jwt]} (<-result decoded-result)
+                            validation-result
                             (validate-jwt raw-jwt
                                           jwt
                                           jwt-max-lifetime-in-sec
@@ -325,9 +317,9 @@
                                                  :jwt jwt})
                                      (throw e)))
                             (->err :jwt_revoked "JWT is revoked" {:jwt jwt})
-                            {:identity (post-jwt-format-fn jwt)
-                             :jwt jwt})))))))]
-          (handler (into request authentication-result)))))))
+                            (->pure {:identity (post-jwt-format-fn jwt)
+                                     :jwt jwt}))))))))]
+          (handler (into request (result/unwrap authentication-result))))))))
 
 (defn mk-wrap-authorization
   "A function building a middleware taking care of the authorization logic.
