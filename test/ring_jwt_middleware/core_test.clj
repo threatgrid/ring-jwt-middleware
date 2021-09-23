@@ -169,29 +169,29 @@
          (sut/validate-jwt "jwt" {:user-identifier "foo@bar.com"
                             :iat 1487168050} 86400 test-log-fn)))
   (testing "check-fn throw an exception"
-    (is (= "check-fn fail test"
-           (try
-             (sut/validate-jwt "jwt"
-                               decoded-jwt-1
-                               86400
-                               (fn [raw-jwt jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
-                               test-log-fn)
-             (catch Exception e (.getMessage e)))))
-    (is (= [{:msg "jwt-check-fn thrown an exception on",
-             :infos
-             {:level :error,
-              :raw-jwt "jwt"
-              :jwt
-              {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
-               :exp 1499419023,
-               :iat 1498814223,
-               :nbf 1498813923,
-               :sub "foo@bar.com",
-               :iss "TEST-ISSUER-1"
-               :user-identifier "foo@bar.com",
-               :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
-               :foo "bar"}}}]
-           @log-events))
+    (is (= {:jwt-error
+            {:level :error,
+             :raw-jwt "jwt",
+             :jwt
+             {:user-identifier "foo@bar.com",
+              :sub "foo@bar.com",
+              :iss "TEST-ISSUER-1",
+              :exp 1499419023,
+              :jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
+              :nbf 1498813923,
+              :foo "bar",
+              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
+              :iat 1498814223},
+             :error :jwt-custom-check-exception,
+             :error_description "jwt-check-fn thrown an exception"}}
+           (-> (try
+                 (sut/validate-jwt "jwt"
+                                   decoded-jwt-1
+                                   86400
+                                   (fn [raw-jwt jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
+                                   test-log-fn)
+                 (catch Exception e (.getMessage e)))
+               (update :jwt-error dissoc :exception))))
     (reset-log-events))
 
   (testing "check-fn fail by using the raw-jwt"
