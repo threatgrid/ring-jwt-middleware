@@ -32,57 +32,69 @@ currently, only RS256 is supported.
 At this step the ~request~ passed to ~my-handler~ will have some of the following keys added:
 
 - ~jwt~ => the claims of the JWT
-- ~identity~ => the object identity constructed using JWT claims
+- ~identity~ => the object representing the user identity constructed using JWT claims
 - ~jwt-error~ => will contain an error object if the something went wrong with the JWT
 
+The ~wrap-authentication~ will not take any decision about authorization access.
+This lib also provide another helper to build another middleware handling
+authorization.
+You can inject your own authorization rules, via:
 
+#+begin_src clojure
+(let [wrap-authentication (mk-wrap-authentication
+                           {:pubkey-path "/etc/secret/jwt.pub"
+                            :is-revoked-fn my-revocation-check-fn
+                            :jwt-check-fn my-jwt-checks})
+      wrap-authorization (mk-wrap-authorization
+                          {:no-jwt-handler my-middleware
+                           :error-handler my-error-handler})]
+  (wrap-authentication (wrap-authorization my-handler)))
+#+end_src
 
-*** Middleware & options
+**** Notes
 
-Use =wrap-jwt-auth-fn= to create an instance of the middleware,
-wrap your routes with it:
+There is a distinction between the ~:no-jwt~ error and the other one.
+The main reason being that you should return an error in the ~error-handler~
+while you could still accept un-authenticated access.
 
-#+BEGIN_SRC clojure
-(let [wrap-jwt
-      (wrap-jwt-auth-fn {:pubkey-path jwt-cert-path
-                         :is-revoked-fn revoked?
-                         :jwt-max-lifetime-in-sec jwt-lifetime
-                         :jwt-check-fn check-jwt-fields
-                         :no-jwt-handler authorize-no-jwt-header-strategy})]
-  (api (api-data url-prefix)
-        (middleware [wrap-jwt]
-          (routes service url-prefix))))
-#+END_SRC
+If you want to log the calls you should probably add a middleware after
+authentication but before authorization.
 
-| Option                     | Description                                                                            | Default                        |
-|----------------------------+----------------------------------------------------------------------------------------+--------------------------------|
-| =:pubkey-path=             | the path to your public key                                                            | nil                            |
-| =:pubkey-fn=               | A fn from claims to public key, has precedence over pubkey-path                        | nil                            |
-| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                  | 86400                          |
-| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                    | nil                            |
-| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                            |
+*** Options
+
+Notice you could add the following keys in the configuration passed to ~mk-wrap-authentication~:
+
+1. ~is-revoked-fn~ ; given a decoded JWT should return true or false. If true
+   the request return a 401. If not specified default to ~no-revocation-strategy~.
+2. ~jwt-check-fn~ ; a function that takes two argument the raw JWT and the
+   decoded JWT. This function should return a list of errors. If the list
+   is empty, then the check is successful otherwise return throw a 401.
+
+| Option                   | Description                                                                          | Default                        |
+|--------------------------+--------------------------------------------------------------------------------------+--------------------------------|
+| =:pubkey-path=             | the path to your public key                                                          | nil                            |
+| =:pubkey-fn=               | A fn from claims to public key, has precedence over pubkey-path                      | nil                            |
+| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                | 86400                          |
+| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                  | nil                            |
+| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil            | nil                            |
 | =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy  |
-| =:post-jwt-format-fn=      | a fn that given a JWT generate an identity information                                 | jwt->user-id (the "sub" claim) |
-
-If the request contains a valid JWT auth header, the JWT is merged with the ring
-request under a =:jwt= key as well with a =:identiy= key.
-Otherwise the request is passed to =:no-jwt-handler=.
+| =:post-jwt-format-fn=      | a fn that given a JWT generate an identity information                               | jwt->user-id (the "sub" claim) |
 
 By default if no JWT auth header is found the request is terminated with
-=unauthorized= HTTP response. You can use =authorize-no-jwt-header-strategy= for
-the =:no-jwt-handler= key if you want to manage how to deal with that case in
-you own handler. You could also provide your own middleware function for this
-case.
+=unauthorized= HTTP response.
+You can use =authorize-no-jwt-header-strategy= for the =:no-jwt-handler= key if
+you want to manage how to deal with that case in you own handler.
+You could also provide your own middleware function for this case.
 
 By default the ~:identity~ contains the ~"sub"~ field of the JWT. But you can
-use more complex transformation. For example, there is a `jwt->oauth-ids`
+use more complex transformation. For example, there is a =jwt->oauth-ids=
 function in the code that could be used to handle JWT generated from an OAuth2
 provider.
 
 *** JWT Format
 
-Currently this middleware only supportes JWTs using claims registered in the IANA "JSON Web Token Claims",
-which means you need to generate JWTs using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
+Currently this middleware only supports JWT using claims registered in the IANA "JSON Web Token Claims",
+which means you need to generate JWT using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
 namely =jti=, =exp=, =iat=, =nbf=,=sub=:
 
 | Claim  | Description                                                        | Format |
@@ -116,5 +128,5 @@ some dummy ones are already available for easy testing.
 
 ** License
 
-Copyright © 2015-2019 Cisco Systems
+Copyright © 2015-2021 Cisco Systems
 Eclipse Public License v1.0
