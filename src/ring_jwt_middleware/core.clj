@@ -4,10 +4,11 @@
             [clojure.set :as set]
             [clojure.string :as string]
             [clojure.tools.logging :as log]
-            [ring-jwt-middleware.result :refer [->err ->pure <-result error?]]
-            [ring.util.http-response :as resp]))
+            [ring-jwt-middleware.result :refer [->err ->pure <-result error? Result]]
+            [ring.util.http-response :as resp]
+            [schema.core :as s]))
 
-(defn get-jwt
+(s/defn get-jwt :- (s/maybe s/Str)
   "get the JWT from a ring request"
   [req]
   (if-let [raw-jwt
@@ -18,9 +19,10 @@
     {:raw-jwt raw-jwt}
     (->err :no_jwt "No JWT found in HTTP headers" {})))
 
-(defn decode
+(s/defn decode :- Result
   "Given a JWT return an Auth hash-map"
-  [token pubkey-fn]
+  [token :- s/Str
+   pubkey-fn]
   (try
     (let [jwt (str->jwt token)]
       (if-let [pubkey (pubkey-fn (:claims jwt))]
@@ -43,10 +45,10 @@
               :level :warn
               :exception e}))))
 
-(defn hr-duration
+(s/defn hr-duration :- s/Str
   "Given a duration in ms,
    return a human readable string"
-  [t]
+  [t :- s/Num]
   (let [second     1000
         minute     (* 60 second)
         hour       (* 60 minute)
@@ -74,20 +76,22 @@
          (remove nil?)
          (string/join " "))))
 
-(defn current-epoch! []
+(s/defn current-epoch! :- s/Num
+  []
   (quot (System/currentTimeMillis) 1000))
 
-(defn jwt-expiry-ms
+(s/defn jwt-expiry-ms :- s/Num
   "Given a JWT and a lifetime,
    calculate when it expired"
-  [jwt-created jwt-max-lifetime-in-sec]
+  [jwt-created :- s/Num
+   jwt-max-lifetime-in-sec :- s/Num]
   (- (current-epoch!)
      (+ jwt-created
         jwt-max-lifetime-in-sec)))
 
-(defn check-jwt-expiry
+(s/defn check-jwt-expiry :- Result
   "Return a string if JWT expiration check fails, nil otherwise"
-  [jwt jwt-max-lifetime-in-sec]
+  [jwt jwt-max-lifetime-in-sec :- s/Num]
   (let [required-fields #{:nbf :exp :iat}
         jwt-keys        (set (keys jwt))]
     (if (set/subset? required-fields jwt-keys)
@@ -130,14 +134,13 @@
 
 (def no-revocation-strategy (constantly false))
 
-(defn validate-jwt
+(s/defn validate-jwt :- Result
   "Run both expiration and user checks,
   return a vec of errors or nothing"
-  ([raw-jwt
+  ([raw-jwt :- s/Str
     jwt
-    jwt-max-lifetime-in-sec
-    jwt-check-fn
-    _log-fn]
+    jwt-max-lifetime-in-sec :- s/Num
+    jwt-check-fn]
    (let [expiry-check-result (check-jwt-expiry jwt (or jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec))]
      (if (error? expiry-check-result)
        expiry-check-result
@@ -161,8 +164,8 @@
            custom-checks-result
            (->pure true))))))
 
-  ([raw-jwt jwt jwt-max-lifetime-in-sec log-fn]
-   (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil log-fn)))
+  ([raw-jwt jwt jwt-max-lifetime-in-sec]
+   (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil)))
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
@@ -175,7 +178,7 @@
   "Authorize all request even with no Auth header."
   identity)
 
-(defn jwt->user-id
+(s/defn jwt->user-id :- s/Str
   "can be used as post-jwt-format-fn"
   [jwt]
   (:sub jwt))
@@ -248,14 +251,6 @@
         (update-if-contains? :scopes set) ;; and scopes should be a set, not alist
         )))
 
-(defn default-structured-log
-  [msg infos]
-  (let [level (or (:level infos) :info)
-        txt (format "JWT: %s\n%s"
-                    msg
-                    (pr-str infos))]
-    (log/log level txt)))
-
 (defn mk-wrap-authentication
   "A function building a middleware that will add some fields to the ring request:
 
@@ -271,7 +266,6 @@
   - jwt-check-fn ; should be a function taking a raw JWT string, and a decoded JWT and returns a list of errors or nil if no error is found.
   - jwt-max-lifetime-in-sec ; maximal lifetime of a JWT in seconds (takes priority over :exp)
   - post-jwt-format-fn ; a function taking a JWT and returning a data structure representing the identity of a user
-  - structured-log-fn ; a function that will be called to send structured logs should accept a string and a map parameter.
 
   "
   [{:keys [pubkey-path
@@ -279,18 +273,14 @@
            is-revoked-fn
            jwt-check-fn
            jwt-max-lifetime-in-sec
-           post-jwt-format-fn
-           structured-log-fn]
+           post-jwt-format-fn]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
-         post-jwt-format-fn jwt->user-id
-         structured-log-fn default-structured-log}}]
+         post-jwt-format-fn jwt->user-id}}]
   (let [p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
-                        (do (structured-log-fn
-                             "is-revoked-fn is not a function! no-revocation-strategy is used."
-                             {:level :error})
+                        (do (log/error "is-revoked-fn is not a function! no-revocation-strategy is used.")
                             no-revocation-strategy))]
     (fn [handler]
       (fn [request]
@@ -303,7 +293,7 @@
                       decoded-result
                       (let [{:keys [jwt]} (<-result decoded-result)
                             validation-result
-                            (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn structured-log-fn)]
+                            (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)]
                         (if (error? validation-result)
                           validation-result
                           (let [revocation-result

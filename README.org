@@ -15,6 +15,28 @@ currently, only RS256 is supported.
 
 ** Usage
 
+
+*** Example
+
+#+begin_src clojure
+
+(defn my-handler
+  [request]
+  ,,,)
+
+(let [wrap-authentication
+      (mk-wrap-authentication {:pubkey-path jwt-cert-path})]
+  (wrap-authentication my-handler))
+#+end_src
+
+At this step the ~request~ passed to ~my-handler~ will have some of the following keys added:
+
+- ~jwt~ => the claims of the JWT
+- ~identity~ => the object identity constructed using JWT claims
+- ~jwt-error~ => will contain an error object if the something went wrong with the JWT
+
+
+
 *** Middleware & options
 
 Use =wrap-jwt-auth-fn= to create an instance of the middleware,

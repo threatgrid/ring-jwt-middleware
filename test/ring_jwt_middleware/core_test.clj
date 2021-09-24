@@ -2,10 +2,10 @@
   (:require [clj-jwt.core :as jwt]
             [clj-jwt.intdate :refer [intdate->joda-time]]
             [clj-jwt.key :refer [public-key]]
-            [java-time :as jt]
             [clojure.test :refer [deftest is join-fixtures testing use-fixtures]]
-            [ring-jwt-middleware.result :as result]
-            [ring-jwt-middleware.core :as sut]))
+            [java-time :as jt]
+            [ring-jwt-middleware.core :as sut]
+            [ring-jwt-middleware.result :as result]))
 
 (defn with-fixed-time
   [f]
@@ -23,23 +23,7 @@
         (jwt/sign :RS256 privkey)
         jwt/to-str)))
 
-(def log-events (atom []))
-
-(defn test-log-fn
-  [msg infos]
-  (swap! log-events #(conj % {:msg msg :infos infos})))
-
-(defn reset-log-events
-  []
-  (reset! log-events []))
-
-(defn with-clean-event-logs [f]
-  (reset-log-events)
-  (f))
-
 (use-fixtures :once (join-fixtures [with-fixed-time]))
-
-(use-fixtures :each with-clean-event-logs)
 
 (def epoch-to-time intdate->joda-time)
 
@@ -156,18 +140,18 @@
              (select-keys [:error :error_description])))))
 
 (deftest validate-errors-test
-  (is (result/success? (sut/validate-jwt "jwt" decoded-jwt-1 86400 test-log-fn)))
+  (is (result/success? (sut/validate-jwt "jwt" decoded-jwt-1 86400)))
   (is (= {:jwt-error {:jwt {}
                       :error :jwt_missing_field
                       :error_description
                       "This JWT doesn't contain the following fields #{:exp :nbf :iat}"}}
-         (sut/validate-jwt "jwt" {} 86400 test-log-fn)))
+         (sut/validate-jwt "jwt" {} 86400)))
   (is (= {:jwt-error {:jwt {:user-identifier "foo@bar.com", :iat 1487168050},
                       :error :jwt_missing_field,
                       :error_description
                       "This JWT doesn't contain the following fields #{:exp :nbf}"}}
          (sut/validate-jwt "jwt" {:user-identifier "foo@bar.com"
-                            :iat 1487168050} 86400 test-log-fn)))
+                                  :iat 1487168050} 86400)))
   (testing "check-fn throw an exception"
     (is (= {:jwt-error
             {:level :error,
@@ -189,7 +173,7 @@
                                    decoded-jwt-1
                                    86400
                                    (fn [raw-jwt jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
-                                   test-log-fn)
+                                  )
                  (catch Exception e (.getMessage e)))
                (update :jwt-error dissoc :exception))))
     (reset-log-events))
@@ -214,7 +198,7 @@
                                decoded-jwt-1
                                86400
                                (fn [raw-jwt jwt] [raw-jwt])
-                               test-log-fn)
+                              )
              (catch Exception e (.getMessage e)))))
     (is (= [] @log-events))
     (reset-log-events))
@@ -226,7 +210,7 @@
                      (with-redefs
                        [sut/current-epoch! d]
                        (is (= (format explain-msg expected)
-                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400 test-log-fn)
+                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400)
                                   :jwt-error
                                   :error_description)))))]
         (tst-fn (const-d 2017 02 16 14 14 11) "1s")
@@ -237,7 +221,7 @@
         (with-redefs
           [sut/current-epoch! (const-d 2017 02 16 14 14 11)]
           (is (= (format explain-msg "1s")
-                 (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil test-log-fn)
+                 (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil)
                      :jwt-error
                      :error_description))
               "Default maximal JWT lifetime should be set to 1 day"))))
@@ -248,7 +232,7 @@
                      (with-redefs
                        [sut/current-epoch! d]
                        (is (= (format explain-msg expected expected-max)
-                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 max-lifetime test-log-fn)
+                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 max-lifetime)
                                   :jwt-error :error_description)))))]
         (tst-fn (const-d 2017 02 16 14 14 11) 86400 "1s" "1 day")
         (tst-fn (const-d 2017 02 16 14 14 11) 86300 "1min 41s" "23h 58min 20s")))))
