@@ -11,3 +11,4 @@ pom.xml.asc
 .hg/
 .projectile
 .*.swp
+.clj-kondo/.cache/

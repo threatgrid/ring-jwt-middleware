@@ -6,22 +6,18 @@
   A function that return a `Result` means the function returned either a successful result or an error with a
   common error structure (`JwtError`).
 
-  As the code is quite minimal I didn't introduce a `let-either` macro to simulate a monadic notation.
-  And instead manage the dispatch manually via:
+  The `let-either` macro provides a monadic syntax.
+  Mainly:
 
   ```
-  (let [x (fn-returning-a-result ,,,)]
-    (if (error? x)
-       x
-       (let [return-value (<-result x)]
-         ,,,,)))
+  (let-either [result-value-1 (fn-returning-a-result-1 ,,,)
+               result-value-2 (fn-returning-a-result-2 ,,,)
+               ,,,]
+    ,,,)
   ```
 
-  Which while a bit cumbersome is probably easier to understand.
-  And also for some retro-compatibily reason this is not _the_ right monadic pattern
-  (we should use (<-result x) in case of error)
-
-  Whatever, this is still a pretty usefule abstraction even without going very deep.
+  if `fn-returning-a-result-1` return an error then we will not execute the rest of the let-either.
+  And return the full `result`.
   "
   (:require [schema.core :as s]
             [schema-tools.core :as st]))
@@ -73,3 +69,25 @@
   (if (error? result)
     result
     (:result result)))
+
+(defmacro let-either
+  "The let-either macro can be used to handle cascading results that
+  can depend on preceding values.
+  If one of the function fail, we return the failed result.
+  If all functions are successful we return the content of the
+  body."
+  {:special-form true
+   :forms '[(let-either [bindings*] exprs*)]
+   :style/indent 1}
+  [bindings & body]
+  (assert (vector? bindings) "let-either requires a vector for its bindings")
+  (if (empty? bindings)
+    `(do ~@body)
+    (if (even? (count bindings))
+      `(let [result# ~(nth bindings 1)]
+         (if (error? result#)
+           result#
+           (let [~(nth bindings 0) (<-result result#)]
+             (let-either ~(subvec bindings 2) ~@body))))
+      (throw (IllegalArgumentException.
+              "an even number of arguments is expected in the bindings")))))

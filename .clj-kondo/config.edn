@@ -1,0 +1,2 @@
+{:lint-as
+ {ring-jwt-middleware.result/let-either clojure.core/let}}

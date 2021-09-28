@@ -4,7 +4,7 @@
             [clojure.set :as set]
             [clojure.string :as string]
             [clojure.tools.logging :as log]
-            [ring-jwt-middleware.result :refer [->err ->pure <-result error? Result result-of]]
+            [ring-jwt-middleware.result :refer [->err ->pure <-result result-of let-either]]
             [ring.util.http-response :as resp]
             [schema.core :as s]
             [schema-tools.core :as st]))
@@ -171,24 +171,22 @@
     jwt
     jwt-max-lifetime-in-sec :- s/Num
     jwt-check-fn]
-   (let [expiry-check-result (check-jwt-expiry jwt (or jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec))]
-     (if (error? expiry-check-result)
-       expiry-check-result
-       (if (fn? jwt-check-fn)
-         (or (try (when-let [checks (seq (remove nil? (jwt-check-fn raw-jwt jwt)))]
-                    (->err :jwt_custom_check_fail
-                           (string/join ", " checks)
-                           {:jwt jwt
-                            :raw-jwt raw-jwt}))
-                  (catch Exception e
-                    (->err :jwt-custom-check-exception
-                           "jwt-check-fn thrown an exception"
-                           {:level :error
-                            :exception e
-                            :raw-jwt raw-jwt
-                            :jwt jwt})))
-             (->pure :custom-checks-ok))
-         (->pure :no-custom-checks)))))
+   (let-either [_ (check-jwt-expiry jwt (or jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec))]
+     (if (fn? jwt-check-fn)
+       (or (try (when-let [checks (seq (remove nil? (jwt-check-fn raw-jwt jwt)))]
+                  (->err :jwt_custom_check_fail
+                         (string/join ", " checks)
+                         {:jwt jwt
+                          :raw-jwt raw-jwt}))
+                (catch Exception e
+                  (->err :jwt-custom-check-exception
+                         "jwt-check-fn thrown an exception"
+                         {:level :error
+                          :exception e
+                          :raw-jwt raw-jwt
+                          :jwt jwt})))
+           (->pure :custom-checks-ok))
+       (->pure :no-custom-checks))))
 
   ([raw-jwt jwt jwt-max-lifetime-in-sec]
    (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil)))
@@ -312,31 +310,20 @@
     (fn [handler]
       (fn [request]
         (let [authentication-result
-              (let [{raw-jwt :result :as get-jwt-result} (get-jwt request)]
-                (if (error? get-jwt-result)
-                  get-jwt-result
-                  (let [decoded-result (decode raw-jwt p-fn)]
-                    (if (error? decoded-result)
-                      decoded-result
-                      (let [{:keys [jwt]} (<-result decoded-result)
-                            validation-result
-                            (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)]
-                        (if (error? validation-result)
-                          validation-result
-                          (let [revocation-result
-                                (try (if (is-revoked-fn jwt)
-                                       (->err :jwt_revoked "JWT is revoked" {:jwt jwt})
-                                       (->pure :ok))
-                                     (catch Exception e
-                                       (->err :jwt-revocation-fn-exception
-                                              "is-revoked-fn thrown an exception"
-                                              {:level :error
-                                               :exception e
-                                               :jwt jwt})))]
-                            (if (error? revocation-result)
-                              revocation-result
-                              (->pure {:identity (post-jwt-format-fn jwt)
-                                       :jwt jwt})))))))))]
+              (let-either [raw-jwt (get-jwt request)
+                           {:keys [jwt] :as  _decoded-result} (decode raw-jwt p-fn)
+                           _ (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)
+                           _ (try (if (is-revoked-fn jwt)
+                                    (->err :jwt_revoked "JWT is revoked" {:jwt jwt})
+                                    (->pure :ok))
+                                  (catch Exception e
+                                    (->err :jwt-revocation-fn-exception
+                                           "is-revoked-fn thrown an exception"
+                                           {:level :error
+                                            :exception e
+                                            :jwt jwt})))]
+                (->pure {:identity (post-jwt-format-fn jwt)
+                         :jwt jwt}))]
           (handler (into request (<-result authentication-result))))))))
 
 (defn mk-wrap-authorization
