@@ -35,22 +35,20 @@
     :post-jwt-format-fn (s/=> s/Any s/Any)
     :jwt-check-fn (s/=> s/Str s/Any s/Bool)}))
 
-
 (s/defn get-jwt :- (result-of s/Str)
   "get the JWT from a ring request"
   [req]
-  (if-let [raw-jwt
-           (or (some->> (get-in req [:headers "authorization"])
-                        (re-seq #"^Bearer\s+(.*)$")
-                        first
-                        second))]
+  (if-let [raw-jwt (some->> (get-in req [:headers "authorization"])
+                            (re-seq #"^Bearer\s+(.*)$")
+                            first
+                            second)]
     (->pure raw-jwt)
     (->err :no_jwt "No JWT found in HTTP headers" {})))
 
 (s/defn decode :- (result-of {:jwt JwtClaims})
   "Given a JWT return an Auth hash-map"
   [token :- s/Str
-   pubkey-fn]
+   pubkey-fn :- (s/=> s/Any)]
   (try
     (let [jwt (str->jwt token)]
       (if-let [pubkey (pubkey-fn (:claims jwt))]
@@ -105,12 +103,12 @@
          (string/join " "))))
 
 (s/defn current-epoch! :- s/Num
+  "Returns the current time in epoch"
   []
   (quot (System/currentTimeMillis) 1000))
 
 (s/defn jwt-expiry-ms :- s/Num
-  "Given a JWT and a lifetime,
-   calculate when it expired"
+  "Given a JWT creation epoch and a lifetime, calculate when it expired in seconds"
   [jwt-created :- s/Num
    jwt-max-lifetime-in-sec :- s/Num]
   (- (current-epoch!)
@@ -118,7 +116,7 @@
         jwt-max-lifetime-in-sec)))
 
 (s/defn check-jwt-expiry :- (result-of s/Keyword)
-  "Return a string if JWT expiration check fails, nil otherwise"
+  "Return a result with some error if the JWT do not respect time-related restrictions."
   [jwt jwt-max-lifetime-in-sec :- s/Num]
   (let [required-fields #{:nbf :exp :iat}
         jwt-keys        (set (keys jwt))]
@@ -153,17 +151,20 @@
              {:jwt jwt}))))
 
 (defn default-error-handler
-  "Return an `unauthorized` HTTP response
-  and log the error along debug infos"
+  "Return an `unauthorized` HTTP response and log the error along debug infos"
   [{:keys [error error_description] :as error-data}]
   (log/infof "%s: %s %s" error error_description (dissoc error-data :error :error_description :raw_jwt))
   (resp/unauthorized (dissoc error-data :raw_jwt)))
 
-(def default-jwt-lifetime-in-sec 86400)
+(def default-jwt-lifetime-in-sec
+  "Default JWT lifetime is 24h"
+  86400)
 
-(def no-revocation-strategy (constantly false))
+(def no-revocation-strategy
+  "The default function used for `:is-revoked-fn` configuration"
+  (constantly false))
 
-(s/defn validate-jwt :- Result
+(s/defn validate-jwt :- (result-of s/Keyword)
   "Run both expiration and user checks,
   return a vec of errors or nothing"
   ([raw-jwt :- s/Str
@@ -173,25 +174,21 @@
    (let [expiry-check-result (check-jwt-expiry jwt (or jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec))]
      (if (error? expiry-check-result)
        expiry-check-result
-       (let [custom-checks-result
-             (if (fn? jwt-check-fn)
-               (or (try (when-let [checks (seq (remove nil? (jwt-check-fn raw-jwt jwt)))]
-                          (->err :jwt_custom_check_fail
-                                 (string/join ", " checks)
-                                 {:jwt jwt
-                                  :raw-jwt raw-jwt}))
-                        (catch Exception e
-                          (->err :jwt-custom-check-exception
-                                 "jwt-check-fn thrown an exception"
-                                 {:level :error
-                                  :exception e
-                                  :raw-jwt raw-jwt
-                                  :jwt jwt})))
-                   (->pure :custom-checks-ok))
-               (->pure :no-custom-checks))]
-         (if (error? custom-checks-result)
-           custom-checks-result
-           (->pure true))))))
+       (if (fn? jwt-check-fn)
+         (or (try (when-let [checks (seq (remove nil? (jwt-check-fn raw-jwt jwt)))]
+                    (->err :jwt_custom_check_fail
+                           (string/join ", " checks)
+                           {:jwt jwt
+                            :raw-jwt raw-jwt}))
+                  (catch Exception e
+                    (->err :jwt-custom-check-exception
+                           "jwt-check-fn thrown an exception"
+                           {:level :error
+                            :exception e
+                            :raw-jwt raw-jwt
+                            :jwt jwt})))
+             (->pure :custom-checks-ok))
+         (->pure :no-custom-checks)))))
 
   ([raw-jwt jwt jwt-max-lifetime-in-sec]
    (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil)))
