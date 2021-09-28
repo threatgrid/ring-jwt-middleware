@@ -5,7 +5,19 @@
             [clojure.test :refer [deftest is join-fixtures testing use-fixtures]]
             [java-time :as jt]
             [ring-jwt-middleware.core :as sut]
-            [ring-jwt-middleware.result :as result]))
+            [ring-jwt-middleware.result :as result]
+            [clojure.tools.logging]
+            [clojure.tools.logging.impl]
+            [schema.test]))
+
+(defn with-disabled-logs [t]
+  (binding [clojure.tools.logging/*logger-factory*
+            clojure.tools.logging.impl/disabled-logger-factory]
+    (t)))
+
+(use-fixtures :each
+  schema.test/validate-schemas
+  with-disabled-logs)
 
 (defn with-fixed-time
   [f]
@@ -41,18 +53,6 @@
 
 
 (jt/available-zone-ids)
-
-(def input-jwt-token-1
-  "a map for creating a sample token with clj-jwt"
-  {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
-   :exp (epoch-to-time 1499419023)
-   :iat (epoch-to-time 1498814223) ;; 2017-06-30T09:17:03Z
-   :nbf (epoch-to-time 1498813923)
-   :sub "foo@bar.com"
-   :iss "TEST-ISSUER-1"
-   :user-identifier "foo@bar.com"
-   :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
-   :foo "bar"})
 
 (def jwt-token-1
   (make-jwt
@@ -132,7 +132,6 @@
 (deftest decode-test
   (is (= decoded-jwt-1
          (:jwt (result/<-result (sut/decode jwt-token-1 (constantly pubkey1))))))
-  (is (= [] @log-events))
   (is (result/error? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))))
   (is (= {:error :jwt_invalid_signature, :error_description "Invalid Signature"}
          (-> (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))
@@ -172,11 +171,10 @@
                  (sut/validate-jwt "jwt"
                                    decoded-jwt-1
                                    86400
-                                   (fn [raw-jwt jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
+                                   (fn [_raw-jwt _jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
                                   )
                  (catch Exception e (.getMessage e)))
-               (update :jwt-error dissoc :exception))))
-    (reset-log-events))
+               (update :jwt-error dissoc :exception)))))
 
   (testing "check-fn fail by using the raw-jwt"
     (is (= {:jwt-error
@@ -193,15 +191,11 @@
               :iat 1498814223},
              :error :jwt_custom_check_fail,
              :error_description "jwt"}}
-           (try
-             (sut/validate-jwt "jwt"
-                               decoded-jwt-1
-                               86400
-                               (fn [raw-jwt jwt] [raw-jwt])
-                              )
-             (catch Exception e (.getMessage e)))))
-    (is (= [] @log-events))
-    (reset-log-events))
+           (try (sut/validate-jwt "jwt"
+                                  decoded-jwt-1
+                                  86400
+                                  (fn [raw-jwt _jwt] [raw-jwt]))
+             (catch Exception e (.getMessage e))))))
 
   (testing "expiration message"
     (testing "expired time"
@@ -239,7 +233,7 @@
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
-    (is (= {:raw-jwt "foo"}
+    (is (= {:result "foo"}
            (sut/get-jwt {:headers {"authorization" "Bearer foo"}}))))
   (testing "get-jwt requests without no JWT"
     (is (= {:jwt-error {:error :no_jwt, :error_description "No JWT found in HTTP headers"}}

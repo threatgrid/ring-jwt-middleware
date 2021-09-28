@@ -7,11 +7,14 @@
     {:error s/Keyword
      :error_description s/Str}))
 
+(s/defn result-of [s]
+  {(s/optional-key :result) s
+   (s/optional-key :jwt-error) JwtError})
+
 (s/defschema Result
   ;; A result is similar to the Either in Haskell
   ;; It represent either a value or an error
-  {(s/optional-key :result) s/Any
-   (s/optional-key :jwt-error) JwtError})
+  (result-of s/Any))
 
 (s/defn ->pure :- Result
   "given a value build a result containing this value"

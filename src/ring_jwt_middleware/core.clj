@@ -4,11 +4,39 @@
             [clojure.set :as set]
             [clojure.string :as string]
             [clojure.tools.logging :as log]
-            [ring-jwt-middleware.result :refer [->err ->pure <-result error? Result]]
+            [ring-jwt-middleware.result :refer [->err ->pure <-result error? Result result-of]]
             [ring.util.http-response :as resp]
-            [schema.core :as s]))
+            [schema.core :as s]
+            [schema-tools.core :as st]))
 
-(s/defn get-jwt :- (s/maybe s/Str)
+;; Schemas
+(s/defschema KeywordOrString
+  (s/conditional keyword? s/Keyword
+                 :else s/Str))
+
+(s/defschema JwtClaims
+  (st/merge
+   (st/optional-keys
+    {:exp s/Num
+     :nbf s/Num
+     :iat s/Num
+     :iss s/Str
+     :sub s/Str
+     :aud (s/conditional string? s/Str :else [s/Str])
+     :user_email s/Str})
+   {KeywordOrString s/Any}))
+
+(s/defschema Config
+  (st/optional-keys
+   {:pubkey-path s/Str
+    :pubkey-fn (s/=> s/Any s/Str)
+    :is-revoked-fn (s/=> s/Any s/Bool)
+    :no-jwt-handler (s/=> (s/=> s/Any s/Any) (s/=> s/Any s/Any))
+    :post-jwt-format-fn (s/=> s/Any s/Any)
+    :jwt-check-fn (s/=> s/Str s/Any s/Bool)}))
+
+
+(s/defn get-jwt :- (result-of s/Str)
   "get the JWT from a ring request"
   [req]
   (if-let [raw-jwt
@@ -16,10 +44,10 @@
                         (re-seq #"^Bearer\s+(.*)$")
                         first
                         second))]
-    {:raw-jwt raw-jwt}
+    (->pure raw-jwt)
     (->err :no_jwt "No JWT found in HTTP headers" {})))
 
-(s/defn decode :- Result
+(s/defn decode :- (result-of {:jwt JwtClaims})
   "Given a JWT return an Auth hash-map"
   [token :- s/Str
    pubkey-fn]
@@ -89,7 +117,7 @@
      (+ jwt-created
         jwt-max-lifetime-in-sec)))
 
-(s/defn check-jwt-expiry :- Result
+(s/defn check-jwt-expiry :- (result-of s/Keyword)
   "Return a string if JWT expiration check fails, nil otherwise"
   [jwt jwt-max-lifetime-in-sec :- s/Num]
   (let [required-fields #{:nbf :exp :iat}
@@ -117,7 +145,8 @@
           (->err :jwt_expired
                  (format "This JWT max lifetime has expired %s ago"
                          (hr-duration (* 1000 expired-lifetime-secs)))
-                 err-metas)))
+                 err-metas)
+          :else (->pure :ok)))
       (->err :jwt_missing_field
              (format "This JWT doesn't contain the following fields %s"
                      (pr-str (set/difference required-fields jwt-keys)))
@@ -180,10 +209,10 @@
 
 (s/defn jwt->user-id :- s/Str
   "can be used as post-jwt-format-fn"
-  [jwt]
+  [jwt :- JwtClaims]
   (:sub jwt))
 
-(defn jwt->oauth-ids
+(s/defn jwt->oauth-ids
   "can be used as post-jwt-format-fn
 
   This is an example function that given a JWT whose claims looks like:
@@ -226,7 +255,8 @@
               :id \"org-id\"},
       :scopes #{\"scope1\" \"scope2\"}}
   "
-  [prefix jwt]
+  [prefix :- s/Str
+   jwt :- JwtClaims]
   (let [n (+ 1 (count prefix))
         update-if-contains? (fn [m k f]
                               (if (contains? m k)
@@ -251,7 +281,7 @@
         (update-if-contains? :scopes set) ;; and scopes should be a set, not alist
         )))
 
-(defn mk-wrap-authentication
+(s/defn mk-wrap-authentication
   "A function building a middleware that will add some fields to the ring request:
 
   - :jwt that will contain the jwt claims
@@ -276,7 +306,7 @@
            post-jwt-format-fn]
     :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
          is-revoked-fn no-revocation-strategy
-         post-jwt-format-fn jwt->user-id}}]
+         post-jwt-format-fn jwt->user-id}} :- Config]
   (let [p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
@@ -285,7 +315,7 @@
     (fn [handler]
       (fn [request]
         (let [authentication-result
-              (let [{:keys [raw-jwt] :as get-jwt-result} (get-jwt request)]
+              (let [{raw-jwt :result :as get-jwt-result} (get-jwt request)]
                 (if (error? get-jwt-result)
                   get-jwt-result
                   (let [decoded-result (decode raw-jwt p-fn)]
