@@ -50,7 +50,10 @@
               "Maximal number of second a JWT does not expires")
     :post-jwt-format-fn
     (describe (s/=> s/Any JWTClaims)
-              "A function taking the JWT claims and building an Identity object suitable for your needs")}
+              "A function taking the JWT claims and building an Identity object suitable for your needs")
+    :error-handler
+    (describe (s/=> s/Any)
+              "A function that given a JWTError returns a ring response.")}
    (st/optional-keys
     {:pubkey-fn (describe (s/=> s/Any s/Str)
                           "A function returning a public key (takes precedence over pubkey-path)")

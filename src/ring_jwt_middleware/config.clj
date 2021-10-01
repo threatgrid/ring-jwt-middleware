@@ -12,9 +12,9 @@
 
 (defn default-error-handler
   "Return an `unauthorized` HTTP response and log the error along debug infos"
-  [{:keys [error error_description] :as error-data}]
-  (log/infof "%s: %s %s" error error_description (dissoc error-data :error :error_description :raw_jwt))
-  (resp/unauthorized (dissoc error-data :raw_jwt)))
+  [{:keys [error error_description] :as jwt-error}]
+  (log/infof "%s: %s %s" error error_description (dissoc jwt-error :error :error_description :raw_jwt))
+  (resp/unauthorized (dissoc jwt-error :raw_jwt)))
 
 (def default-jwt-lifetime-in-sec
   "Default JWT lifetime is 24h"
@@ -23,17 +23,6 @@
 (def no-revocation-strategy
   "The default function used for `:is-revoked-fn` configuration"
   (constantly false))
-
-(defn forbid-no-jwt-header-strategy
-  "Forbid all request with no Auth header"
-  [_handler]
-  (constantly
-   (resp/unauthorized {:error :invalid_request
-                       :error_description "No Authorization Header"})))
-
-(def authorize-no-jwt-header-strategy
-  "Authorize all request even with no Auth header."
-  identity)
 
 (s/defn jwt->user-id :- s/Str
   "can be used as post-jwt-format-fn"
@@ -113,9 +102,10 @@
 (def default-config
   {:allow-unauthenticated-access? false
    :current-epoch current-epoch!
-   :is-revoked-fn (constantly false)
+   :is-revoked-fn no-revocation-strategy
    :jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
-   :post-jwt-format-fn jwt->user-id})
+   :post-jwt-format-fn jwt->user-id
+   :error-handler default-error-handler})
 
 (defn conf-valid?
   [{:keys [pubkey-path pubkey-fn] :as conf}]

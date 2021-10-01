@@ -3,9 +3,12 @@
             [clj-jwt.key :refer [public-key]]
             [clojure.set :as set]
             [clojure.string :as string]
-            [clojure.tools.logging :as log]
-            [ring-jwt-middleware.result :refer [->err ->pure <-result result-of let-either]]
-            [ring-jwt-middleware.schemas :refer [Config UserConfig JWTClaims]]
+            [ring-jwt-middleware.config :refer [->config]]
+            [ring-jwt-middleware.result
+             :refer
+             [->err ->pure <-result let-either result-of]]
+            [ring-jwt-middleware.schemas :refer [Config JWTClaims UserConfig]]
+            [ring.util.http-response :as resp]
             [schema.core :as s]))
 
 (s/defn get-jwt :- (result-of s/Str)
@@ -157,11 +160,7 @@
                 is-revoked-fn
                 post-jwt-format-fn]
          :as config} (->config user-config)
-        p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
-        is-revoked-fn (if (fn? is-revoked-fn)
-                        is-revoked-fn
-                        (do (log/error "is-revoked-fn is not a function! no-revocation-strategy is used.")
-                            no-revocation-strategy))]
+        p-fn (or pubkey-fn (constantly (public-key pubkey-path)))]
     (fn [handler]
       (fn [request]
         (let [authentication-result
@@ -191,6 +190,17 @@
   (and (contains? request :jwt)
        (not (contains? request :jwt-error))))
 
+(defn forbid-no-jwt-header-strategy
+  "Forbid all request with no Auth header"
+  [_handler]
+  (constantly
+   (resp/unauthorized {:error :invalid_request
+                       :error_description "No JWT found in HTTP Authorization header"})))
+
+(def authorize-no-jwt-header-strategy
+  "Authorize all request even with no Auth header."
+  identity)
+
 (s/defn mk-wrap-authorization
   "A function building a middleware taking care of the authorization logic.
 
@@ -198,15 +208,14 @@
 
   The configuration is map containing two handlers.
 
-  - allow-unauthenticated? => set it to true to not block the request when no JWT is provided
+  - allow-unauthenticated-access? => set it to true to not block the request when no JWT is provided
   - error-handler => a function taking a JWT error (see Result) and returning a ring response.
                      This function should generally just return a 401 (unauthorized)."
   [user-config :- UserConfig]
-  (let [{:keys [allow-unauthenticated?
-                error-handler]} (->config user-config)
-        handle-error (or error-handler default-error-handler)]
+  (let [{:keys [allow-unauthenticated-access?
+                error-handler]} (->config user-config)]
     (fn [handler]
-      (let [no-jwt-fn (if allow-unauthenticated?
+      (let [no-jwt-fn (if allow-unauthenticated-access?
                         (authorize-no-jwt-header-strategy handler)
                         (forbid-no-jwt-header-strategy handler))]
         (fn [request]
@@ -215,9 +224,9 @@
             (let [jwt-error (:jwt-error request)]
               (case (:error jwt-error)
                 :no_jwt (no-jwt-fn request)
-                nil (handle-error {:error :unauthenticated_user
-                                   :error_description "No authenticated user."})
-                (handle-error jwt-error)))))))))
+                nil (error-handler {:error :unauthenticated_user
+                                    :error_description "No authenticated user."})
+                (error-handler jwt-error)))))))))
 
 
 (defn wrap-jwt-auth-fn
