@@ -10,8 +10,8 @@ currently, only RS256 is supported.
 - RS256 signing
 - uses IANA "JSON Web Token Claims"
 - JWT lifetime & Expiration support
-- custom additional validation through a user provided functions
-- custom revocation check through a user provided functions
+- custom additional validation through user-provided functions
+- custom revocation check through user-provided functions
 
 ** Usage
 
@@ -36,7 +36,7 @@ At this step the ~request~ passed to ~my-handler~ will have some of the followin
 - ~jwt-error~ => will contain an error object if the something went wrong with the JWT
 
 The ~wrap-authentication~ will not take any decision about authorization access.
-This lib also provide another helper to build another middleware handling
+This lib also provides another helper to build another middleware handling
 authorization.
 You can inject your own authorization rules, via:
 

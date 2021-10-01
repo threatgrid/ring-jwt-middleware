@@ -16,7 +16,7 @@
     ,,,)
   ```
 
-  if `fn-returning-a-result-1` return an error then we will not execute the rest of the let-either.
+  if `fn-returning-a-result-1` returns an error then we will not execute the rest of the let-either.
   And return the full `result`.
   "
   (:require [schema.core :as s]
