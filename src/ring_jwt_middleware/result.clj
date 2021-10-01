@@ -34,8 +34,8 @@
    (s/optional-key :jwt-error) JwtError})
 
 (s/defschema Result
-  ;; A result is similar to the Either in Haskell
-  ;; It represent either a value or an error
+  "A result is similar to the Either in Haskell
+   It represent either a value or an error"
   (result-of s/Any))
 
 (s/defn ->pure :- Result
