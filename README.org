@@ -62,29 +62,43 @@ authentication but before authorization.
 
 *** Options
 
-Notice you could add the following keys in the configuration passed to ~mk-wrap-authentication~:
+Notice you could add the following keys in the configuration passed to ~mk-wrap-authentication~, ~mk-wrap-authorization~ and ~wrap-jwt-auth-fn:~
 
-1. ~is-revoked-fn~ ; given a decoded JWT should return true or false. If true
-   the request return a 401. If not specified default to ~no-revocation-strategy~.
-2. ~jwt-check-fn~ ; a function that takes two argument the raw JWT and the
-   decoded JWT. This function should return a list of errors. If the list
-   is empty, then the check is successful otherwise return throw a 401.
-
-| Option                   | Description                                                                          | Default                        |
-|--------------------------+--------------------------------------------------------------------------------------+--------------------------------|
-| =:pubkey-path=             | the path to your public key                                                          | nil                            |
-| =:pubkey-fn=               | A fn from claims to public key, has precedence over pubkey-path                      | nil                            |
-| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                | 86400                          |
-| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                  | nil                            |
-| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil            | nil                            |
-| =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy  |
-| =:post-jwt-format-fn=      | a fn that given a JWT generate an identity information                               | jwt->user-id (the "sub" claim) |
+#+begin_src clojure
+(s/defschema Config
+  "Initialized internal Configuration"
+  (st/merge
+   {:allow-unauthenticated-access?
+    (describe s/Bool
+              "Set this to true to allow unauthenticated requests")
+    :current-epoch
+    (describe (s/=> s/Num)
+              "A function returning the current time in epoch format")
+    :is-revoked-fn
+    (describe (s/=> s/Bool JWTClaims)
+              "A function that take a JWT and return true if it is revoked")
+    :jwt-max-lifetime-in-sec
+    (describe s/Num
+              "Maximal number of second a JWT does not expires")
+    :post-jwt-format-fn
+    (describe (s/=> s/Any JWTClaims)
+              "A function taking the JWT claims and building an Identity object suitable for your needs")
+    :error-handler
+    (describe (s/=> s/Any)
+              "A function that given a JWTError returns a ring response.")}
+   (st/optional-keys
+    {:pubkey-fn (describe (s/=> s/Any s/Str)
+                          "A function returning a public key (takes precedence over pubkey-path)")
+     :pubkey-path (describe s/Str
+                            "The path to find the public key that will be used to check the JWT signature")
+     :jwt-check-fn
+     (describe (s/=> s/Bool JWT JWTClaims)
+               (str "A function that take a JWT, claims and return a sequence of string containing errors."
+                    "The check is considered successful if this function returns nil, or a sequence containing only nil values."))})))
+#+end_src
 
 By default if no JWT auth header is found the request is terminated with
 =unauthorized= HTTP response.
-You can use =authorize-no-jwt-header-strategy= for the =:no-jwt-handler= key if
-you want to manage how to deal with that case in you own handler.
-You could also provide your own middleware function for this case.
 
 By default the ~:identity~ contains the ~"sub"~ field of the JWT. But you can
 use more complex transformation. For example, there is a =jwt->oauth-ids=
@@ -95,7 +109,7 @@ provider.
 
 Currently this middleware only supports JWT using claims registered in the IANA "JSON Web Token Claims",
 which means you need to generate JWT using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
-namely =jti=, =exp=, =iat=, =nbf=,=sub=:
+namely =jti=, =exp=, =iat=, =nbf=, =sub=:
 
 | Claim  | Description                                                        | Format |
 |--------+--------------------------------------------------------------------+--------|

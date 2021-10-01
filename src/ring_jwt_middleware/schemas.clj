@@ -1,9 +1,8 @@
 (ns ring-jwt-middleware.schemas
-  "Schemas used"
+  "Schemas"
   (:require [schema-tools.core :as st]
             [schema.core :as s]))
 
-;; Schemas
 (s/defschema KeywordOrString
   (s/conditional keyword? s/Keyword
                  :else s/Str))
@@ -26,7 +25,7 @@
 
 (defn describe
   "A function adding a description meta to schema.
-  This help schema as documentation."
+  The main purpose is just schema annotation for the developers."
   [s description]
   (if (instance? clojure.lang.IObj s)
     (with-meta s {:description description})

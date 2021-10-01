@@ -98,7 +98,6 @@
         (update-if-contains? :scopes set) ;; and scopes should be a set, not alist
         )))
 
-
 (def default-config
   {:allow-unauthenticated-access? false
    :current-epoch current-epoch!
