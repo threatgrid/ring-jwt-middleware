@@ -10,66 +10,147 @@ currently, only RS256 is supported.
 - RS256 signing
 - uses IANA "JSON Web Token Claims"
 - JWT lifetime & Expiration support
-- custom additional validation through a user provided fn
-- custom revokation check through a user provided fn
+- custom additional validation through user-provided functions
+- custom revocation check through user-provided functions
 
 ** Usage
 
-*** Middleware & options
+*** Quickly
 
-Use =wrap-jwt-auth-fn= to create an instance of the middleware,
-wrap your routes with it:
+If you do not want to use a log middleware:
 
-#+BEGIN_SRC clojure
-(let [wrap-jwt
-      (wrap-jwt-auth-fn {:pubkey-path jwt-cert-path
-                         :is-revoked-fn revoked?
-                         :jwt-max-lifetime-in-sec jwt-lifetime
-                         :jwt-check-fn check-jwt-fields
-                         :no-jwt-handler authorize-no-jwt-header-strategy})]
-  (api (api-data url-prefix)
-        (middleware [wrap-jwt]
-          (routes service url-prefix))))
-#+END_SRC
 
-| Option                     | Description                                                                            | Default                        |
-|----------------------------+----------------------------------------------------------------------------------------+--------------------------------|
-| =:pubkey-path=             | the path to your public key                                                            | nil                            |
-| =:pubkey-fn=               | A fn from claims to public key, has precedence over pubkey-path                        | nil                            |
-| =:jwt-max-lifetime-in-sec= | set a max lifetime for JWTs to expire                                                  | 86400                          |
-| =:is-revoked-fn=           | a fn to checks if a given JWT should be revoked, should return bool                    | nil                            |
-| =:jwt-check-fn=            | a fn to custom check the JWT, should return a vec of error strings or nil              | nil                            |
-| =:no-jwt-handler=          | a middleware to pass when no JWT header is found  (=handler -> (request -> response)=) | forbid-no-jwt-header-strategy  |
-| =:post-jwt-format-fn=      | a fn that given a JWT generate an identity information                                 | jwt->user-id (the "sub" claim) |
+#+begin_src clojure
+(defn my-handler
+  [request]
+  ,,,)
 
-If the request contains a valid JWT auth header, the JWT is merged with the ring
-request under a =:jwt= key as well with a =:identiy= key.
-Otherwise the request is passed to =:no-jwt-handler=.
+(def jwt-middleware (wrap-jwt-auth-fn {:pubkey-path jwt-cert-path}))
 
-By default if no JWT auth header is found the request is terminated with
-=unauthorized= HTTP response. You can use =authorize-no-jwt-header-strategy= for
-the =:no-jwt-handler= key if you want to manage how to deal with that case in
-you own handler. You could also provide your own middleware function for this
-case.
+(jwt-middleware my-handler)
+#+end_src
+
+If you want to use a log middleware that will log both user identites
+derived from JWT and response statuses (and other response stats):
+
+#+begin_src clojure
+(defn my-handler
+  [request]
+  ,,,)
+
+(defn wrap-logs
+  "A middleware logging the requests"
+  [handler]
+  (fn [request]
+    (let [user-identity (:identity request)
+          response (handler request)]
+      (log/info (pr-str {:user-identity user-identity
+                         :uri (:uri request)
+                         :status (:status response)}))
+      response)))
+
+(def jwt-middleware
+  (wrap-jwt-auth-with-in-between-middleware-fn
+   {:pubkey-path jwt-cert-path}
+   wrap-logs))
+
+(jwt-middleware my-handler)
+#+end_src
+
+*** Authentication
+
+For Authentication only, and handle the authorization entirely yourself:
+
+#+begin_src clojure
+(defn my-handler
+  [request]
+  ,,,)
+
+(let [wrap-authentication
+      (mk-wrap-authentication {:pubkey-path jwt-cert-path})]
+  (wrap-authentication my-handler))
+#+end_src
+
+At this step the ~request~ passed to ~my-handler~ will have some of the following keys added:
+
+- ~jwt~ => the claims of the JWT
+- ~identity~ => the object representing the user identity constructed using JWT claims
+- ~jwt-error~ => will contain an error object if the something went wrong with the JWT
+
+The ~wrap-authentication~ will not take any decision about authorization access.
+This lib also provides another helper to build another middleware handling
+authorization.
+
+You can inject your own authorization rules, via:
+
+#+begin_src clojure
+(let [wrap-authentication (mk-wrap-authentication
+                           {:pubkey-path "/etc/secret/jwt.pub"
+                            :is-revoked-fn my-revocation-check-fn
+                            :jwt-check-fn my-jwt-checks})
+      wrap-authorization (mk-wrap-authorization
+                          {:error-handler my-error-handler})]
+  (wrap-authentication (wrap-authorization my-handler)))
+#+end_src
+
+*** Options
+
+Notice you could add the following keys in the configuration passed to ~mk-wrap-authentication~, ~mk-wrap-authorization~ and ~wrap-jwt-auth-fn:~
+
+#+begin_src clojure
+(s/defschema Config
+  "Initialized internal Configuration"
+  (st/merge
+   {:allow-unauthenticated-access?
+    (describe s/Bool
+              "Set this to true to allow unauthenticated requests")
+    :current-epoch
+    (describe (s/=> s/Num)
+              "A function returning the current time in epoch format")
+    :is-revoked-fn
+    (describe (s/=> s/Bool JWTClaims)
+              "A function that take a JWT and return true if it is revoked")
+    :jwt-max-lifetime-in-sec
+    (describe s/Num
+              "Maximal number of second a JWT does not expires")
+    :post-jwt-format-fn
+    (describe (s/=> s/Any JWTClaims)
+              "A function taking the JWT claims and building an Identity object suitable for your needs")
+    :error-handler
+    (describe (s/=> s/Any)
+              "A function that given a JWTError returns a ring response.")}
+   (st/optional-keys
+    {:pubkey-fn (describe (s/=> s/Any s/Str)
+                          "A function returning a public key (takes precedence over pubkey-path)")
+     :pubkey-path (describe s/Str
+                            "The path to find the public key that will be used to check the JWT signature")
+     :jwt-check-fn
+     (describe (s/=> s/Bool JWT JWTClaims)
+               (str "A function that take a JWT, claims and return a sequence of string containing errors."
+                    "The check is considered successful if this function returns nil, or a sequence containing only nil values."))})))
+#+end_src
+
+By default if no JWT authorization header is found the request is terminated with
+=unauthorized= HTTP response.
 
 By default the ~:identity~ contains the ~"sub"~ field of the JWT. But you can
-use more complex transformation. For example, there is a `jwt->oauth-ids`
+use more complex transformation. For example, there is a =jwt->oauth-ids=
 function in the code that could be used to handle JWT generated from an OAuth2
 provider.
 
 *** JWT Format
 
-Currently this middleware only supportes JWTs using claims registered in the IANA "JSON Web Token Claims",
-which means you need to generate JWTs using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
-namely =jti=, =exp=, =iat=, =nbf=,=sub=:
+Currently this middleware only supports JWT using claims registered in the IANA "JSON Web Token Claims",
+which means you need to generate JWT using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
+namely =jti=, =exp=, =iat=, =nbf=, =sub=:
 
-| Claim  | Description                                                        | Format |
-|--------+--------------------------------------------------------------------+--------|
-| =:exp= | Expiration time: https://tools.ietf.org/html/rfc7519#section-4.1.4 | Long   |
-| =:iat= | Issued At: https://tools.ietf.org/html/rfc7519#section-4.1.6       | Long   |
-| =:jti= | JWT ID: https://tools.ietf.org/html/rfc7519#section-4.1.7          | String |
-| =:nbf= | Not Before: https://tools.ietf.org/html/rfc7519#section-4.1.5      | Long   |
-| =:sub= | Subject: https://tools.ietf.org/html/rfc7519#section-4.1.2         | String |
+| Claim | Description                                                        | Format |
+|-------+--------------------------------------------------------------------+--------|
+| =:exp=  | Expiration time: https://tools.ietf.org/html/rfc7519#section-4.1.4 | Long   |
+| =:iat=  | Issued At: https://tools.ietf.org/html/rfc7519#section-4.1.6       | Long   |
+| =:jti=  | JWT ID: https://tools.ietf.org/html/rfc7519#section-4.1.7          | String |
+| =:nbf=  | Not Before: https://tools.ietf.org/html/rfc7519#section-4.1.5      | Long   |
+| =:sub=  | Subject: https://tools.ietf.org/html/rfc7519#section-4.1.2         | String |
 
 here is a sample token:
 
@@ -94,5 +175,5 @@ some dummy ones are already available for easy testing.
 
 ** License
 
-Copyright © 2015-2019 Cisco Systems
+Copyright © 2015-2021 Cisco Systems
 Eclipse Public License v1.0

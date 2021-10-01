@@ -1,4 +1,4 @@
-(defproject threatgrid/ring-jwt-middleware "1.0.3-SNAPSHOT"
+(defproject threatgrid/ring-jwt-middleware "1.1.0-SNAPSHOT"
   :description "A simple middleware to deal with JWT Authentication"
   :pedantic? :abort
   :license {:name "Eclipse Public License - v 1.0"
@@ -9,7 +9,9 @@
                         ["snapshots" {:url "https://clojars.org/repo" :creds :gpg}]]
   :dependencies [[org.clojure/clojure "1.10.1"]
                  [threatgrid/clj-jwt "0.3.1"]
-                 [threatgrid/clj-momo "0.3.5"]
                  [org.clojure/tools.logging "1.0.0"]
-                 [metosin/ring-http-response "0.9.1"]]
-  :profiles {:dev {:pedantic? :warn}})
+                 [metosin/ring-http-response "0.9.1"]
+                 [prismatic/schema "1.1.12"]
+                 [metosin/schema-tools "0.12.3"]]
+  :profiles {:dev {:pedantic? :warn
+                   :dependencies [[clojure.java-time "0.3.3"]]}})
