@@ -1,9 +1,9 @@
 (ns ring-jwt-middleware.result
-  "This ns provide a set of helpers to handle an abstraction similar to Either in Haskell
+  "This ns provides a set of helpers to handle an abstraction similar to Either in Haskell.
 
-  The main goal is to provide a mechanism similar to the exceptions but pure without Java Exceptions.
+  The main goal is to provide a mechanism similar to the exceptions, albeit pure - without Java Exceptions.
 
-  A function that return a `Result` means the function returned either a successful result or an error with a
+  When a function returns a `Result` - it either contains a result of a successful outcome or an error with a
   common error structure (`JwtError`).
 
   The `let-either` macro provides a monadic syntax.
