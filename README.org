@@ -1,4 +1,7 @@
-[![Clojars Project](https://img.shields.io/clojars/v/threatgrid/ring-jwt-middleware.svg)](https://clojars.org/threatgrid/ring-jwt-middleware)
+
+[[https://clojars.org/threatgrid/ring-jwt-middleware][https://img.shields.io/clojars/v/threatgrid/ring-jwt-middleware.svg]]
+
+
 
 [[https://travis-ci.org/threatgrid/ring-jwt-middleware][https://travis-ci.org/threatgrid/ring-jwt-middleware.png?branch=master]]
 
