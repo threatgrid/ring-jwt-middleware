@@ -1,8 +1,8 @@
 (ns ring-jwt-middleware.config
-  (:require [clojure.tools.logging :as log]
+  (:require [clojure.string :as string]
+            [clojure.tools.logging :as log]
             [ring-jwt-middleware.schemas :refer [Config JWTClaims UserConfig]]
             [ring.util.http-response :as resp]
-            [clojure.string :as string]
             [schema.core :as s]))
 
 (s/defn current-epoch! :- s/Num

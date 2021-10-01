@@ -243,11 +243,9 @@
     (wrapper handler)))
 
 (deftest wrap-jwt-auth-fn-test
-
-  (let [handler (fn [req]
-                  {:status 200
-                   :body (select-keys req [:jwt :identity :jwt-error])})
-        req-1 {:headers {"authorization" (str "Bearer " jwt-token-1)}}
+  (let [handler (fn [req] {:status 200
+                           :body (select-keys req [:jwt :identity :jwt-error])})
+        req {:headers {"authorization" (str "Bearer " jwt-token-1)}}
         req-bad-jwt {:headers {"authorization" (str "Bearer x" jwt-token-1)}}
         req-no-header {}
         req-auth-header-not-jwt {:headers {"authorization" "api-key 1234-1234-1234-1234"}}
@@ -275,7 +273,7 @@
                              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
                              :iat 1498814223},
                        :identity "foo@bar.com"}}
-               (ring-fn req-1)))
+               (ring-fn req)))
 
         (is (= {:status 401,
                 :body
@@ -299,10 +297,10 @@
     (testing "The JWT should be expired after 24h"
       (let [ring-fn (handler-with-mid-cfg {:current-epoch (const-d 2017 07 1 9 17 4)})]
         (is (= 401
-               (:status (ring-fn req-1)))))
+               (:status (ring-fn req)))))
       (let [ring-fn (handler-with-mid-cfg {:current-epoch (const-d 2017 07 1 9 17 3)})]
         (is (= 200
-               (:status (ring-fn req-1))))))
+               (:status (ring-fn req))))))
 
 
     (testing "multiple keys support"
@@ -311,10 +309,10 @@
                           "TEST-ISSUER-1" pubkey1
                           "TEST-ISSUER-2" pubkey2))
             ring-fn (handler-with-mid-cfg {:pubkey-fn pubkey-fn})
-            req-1 {:headers {"authorization" (str "Bearer " jwt-token-1)}}
+            req {:headers {"authorization" (str "Bearer " jwt-token-1)}}
             req-2 {:headers {"authorization" (str "Bearer " jwt-token-2)}}
             req-3 {:headers {"authorization" (str "Bearer " jwt-token-3)}}
-            response-1 (ring-fn req-1)
+            response-1 (ring-fn req)
             response-2 (ring-fn req-2)
             response-3 (ring-fn req-3)]
         (is (= 200 (:status response-1)))
@@ -336,7 +334,7 @@
                              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
                              :iat 1498814223},
                        :identity "foo@bar.com"}}
-               (ring-fn req-1)))
+               (ring-fn req)))
 
         (is (= {:status 401,
                 :body
@@ -354,54 +352,22 @@
                 :body
                 {:jwt-error
                  {:error :no_jwt, :error_description "No JWT found in HTTP headers"}}}
-               (ring-fn req-auth-header-not-jwt))))
-      ))
+               (ring-fn req-auth-header-not-jwt)))))
 
-  #_(testing "revocation test"
-    (let [always-revoke (fn [_] true)
-          wrapper-always-revoke (sut/wrap-jwt-auth-fn
-                                 {:pubkey-path "resources/cert/jwt-key-1.pub"
-                                  :is-revoked-fn always-revoke})
-          never-revoke (fn [_] false)
-          wrapper-never-revoke (sut/wrap-jwt-auth-fn
-                                {:pubkey-path  "resources/cert/jwt-key-1.pub"
-                                 :is-revoked-fn never-revoke})
-          ring-fn-1 (wrapper-always-revoke
-                     (fn [req] {:status 200
-                                :body (:identity req)}))
 
-          ring-fn-2 (wrapper-never-revoke
-                     (fn [req] {:status 200
-                                :body (:identity req)}))
-          req {:headers {"authorization"
-                         (str "Bearer " jwt-token-1)}}]
-      (is (= 401 (:status (ring-fn-1 req))))
-      (is (= 200 (:status (ring-fn-2 req))))
-      (is (= "foo@bar.com"
-             (:body (ring-fn-2 req))))))
-  #_(testing "post jwt transformation test"
-    (let [post-transform (fn [m] {:user {:id (:sub m)}
-                                  :org {:id (:foo m)}})
-          wrapper-tr (sut/wrap-jwt-auth-fn
-                      {:pubkey-path "resources/cert/jwt-key-1.pub"
-                       :post-jwt-format-fn post-transform})
-          ring-fn-1 (wrapper-tr
-                     (fn [req] {:status 200
-                                :body (:identity req)}))
-          req {:headers {"authorization"
-                         (str "Bearer " jwt-token-1)}}]
-      (is (= 200 (:status (ring-fn-1 req))))
-      (is (= {:user {:id "foo@bar.com"}
-              :org {:id "bar"}}
-             (:body (ring-fn-1 req))))))
-  #_(testing "post jwt transformation test"
-    (let [wrapper-check (sut/wrap-jwt-auth-fn
-                         {:pubkey-path "resources/cert/jwt-key-1.pub"})
-          ring-fn-1 (wrapper-check
-                     (fn [req] {:status 200
-                                :body (:identity req)}))
-          req {:headers {"authorization"
-                         (str "Bearer " jwt-token-1)}}]
-      (is (= 401
-             (with-redefs [config/current-epoch! (const-d 2017 07 1 9 17 4)]
-               (:status (ring-fn-1 req))))))))
+    (testing "revocation test"
+      (let [revoke-handler (handler-with-mid-cfg {:is-revoked-fn (constantly true)})
+            no-revoke-handler (handler-with-mid-cfg {:is-revoked-fn (constantly false)})]
+        (is (= 401 (:status (revoke-handler req))))
+        (is (= 200 (:status (no-revoke-handler req))))
+        (is (= "foo@bar.com"
+               (get-in (no-revoke-handler req) [:body :identity])))))
+
+    (testing "post jwt transformation test"
+      (let [post-transform (fn [m] {:user {:id (:sub m)}
+                                    :org {:id (:foo m)}})
+            ring-fn (handler-with-mid-cfg {:post-jwt-format-fn post-transform})]
+        (is (= 200 (:status (ring-fn req))))
+        (is (= {:user {:id "foo@bar.com"}
+                :org {:id "bar"}}
+               (get-in (ring-fn req) [:body :identity])))))))

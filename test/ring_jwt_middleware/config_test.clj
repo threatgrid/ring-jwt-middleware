@@ -1,6 +1,6 @@
 (ns ring-jwt-middleware.config-test
-  (:require [ring-jwt-middleware.config :as sut]
-            [clojure.test :as t])
+  (:require [clojure.test :as t]
+            [ring-jwt-middleware.config :as sut])
   (:import java.lang.AssertionError))
 
 (t/deftest init-config-test

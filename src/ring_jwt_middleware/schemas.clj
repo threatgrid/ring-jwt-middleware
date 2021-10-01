@@ -1,8 +1,7 @@
 (ns ring-jwt-middleware.schemas
   "Schemas used"
-  (:require
-   [schema.core :as s]
-   [schema-tools.core :as st]))
+  (:require [schema-tools.core :as st]
+            [schema.core :as s]))
 
 ;; Schemas
 (s/defschema KeywordOrString
