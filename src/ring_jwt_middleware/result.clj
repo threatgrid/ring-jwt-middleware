@@ -71,11 +71,9 @@
     (:result result)))
 
 (defmacro let-either
-  "The let-either macro can be used to handle cascading results that
-  can depend on preceding values.
+  "To be used to handle cascading results that may depend on preceding values.
   If one of the function fail, we return the failed result.
-  If all functions are successful we return the content of the
-  body."
+  If all functions are successful we return the content of the body."
   {:special-form true
    :forms '[(let-either [bindings*] exprs*)]
    :style/indent 1}
