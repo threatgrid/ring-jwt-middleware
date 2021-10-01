@@ -2,7 +2,7 @@
   (:require [clj-jwt.core :as jwt]
             [clj-jwt.intdate :refer [intdate->joda-time]]
             [clj-jwt.key :refer [public-key]]
-            [clojure.test :refer [deftest is join-fixtures testing use-fixtures]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
             [java-time :as jt]
             [ring-jwt-middleware.core :as sut]
             [ring-jwt-middleware.result :as result]
@@ -19,11 +19,7 @@
   schema.test/validate-schemas
   with-disabled-logs)
 
-(defn with-fixed-time
-  [f]
-  (with-redefs
-    [sut/current-epoch! (constantly 1498815302)]
-    (f)))
+(def fixed-current-epoch (constantly 1498815302))
 
 (defn make-jwt
   "a useful one liner for easy testing"
@@ -34,8 +30,6 @@
         jwt/jwt
         (jwt/sign :RS256 privkey)
         jwt/to-str)))
-
-(use-fixtures :once (join-fixtures [with-fixed-time]))
 
 (def epoch-to-time intdate->joda-time)
 
@@ -139,97 +133,98 @@
              (select-keys [:error :error_description])))))
 
 (deftest validate-errors-test
-  (is (result/success? (sut/validate-jwt "jwt" decoded-jwt-1 86400)))
-  (is (= {:jwt-error {:jwt {}
-                      :error :jwt_missing_field
-                      :error_description
-                      "This JWT doesn't contain the following fields #{:exp :nbf :iat}"}}
-         (sut/validate-jwt "jwt" {} 86400)))
-  (is (= {:jwt-error {:jwt {:user-identifier "foo@bar.com", :iat 1487168050},
-                      :error :jwt_missing_field,
-                      :error_description
-                      "This JWT doesn't contain the following fields #{:exp :nbf}"}}
-         (sut/validate-jwt "jwt" {:user-identifier "foo@bar.com"
-                                  :iat 1487168050} 86400)))
-  (testing "check-fn throw an exception"
-    (is (= {:jwt-error
-            {:level :error,
-             :raw-jwt "jwt",
-             :jwt
-             {:user-identifier "foo@bar.com",
-              :sub "foo@bar.com",
-              :iss "TEST-ISSUER-1",
-              :exp 1499419023,
-              :jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
-              :nbf 1498813923,
-              :foo "bar",
-              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
-              :iat 1498814223},
-             :error :jwt-custom-check-exception,
-             :error_description "jwt-check-fn thrown an exception"}}
-           (-> (try
-                 (sut/validate-jwt "jwt"
-                                   decoded-jwt-1
-                                   86400
-                                   (fn [_raw-jwt _jwt] (throw (ex-info "check-fn fail test" {:test-infos :test})))
-                                  )
-                 (catch Exception e (.getMessage e)))
-               (update :jwt-error dissoc :exception)))))
+  (let [cfg {:jwt-max-lifetime-in-sec nil
+             :jwt-check-fn nil
+             :current-epoch fixed-current-epoch}]
 
-  (testing "check-fn fail by using the raw-jwt"
-    (is (= {:jwt-error
-            {:raw-jwt "jwt"
-             :jwt
-             {:user-identifier "foo@bar.com",
-              :sub "foo@bar.com",
-              :iss "TEST-ISSUER-1",
-              :exp 1499419023,
-              :jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
-              :nbf 1498813923,
-              :foo "bar",
-              :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
-              :iat 1498814223},
-             :error :jwt_custom_check_fail,
-             :error_description "jwt"}}
-           (try (sut/validate-jwt "jwt"
-                                  decoded-jwt-1
-                                  86400
-                                  (fn [raw-jwt _jwt] [raw-jwt]))
-             (catch Exception e (.getMessage e))))))
+    (is (result/success? (sut/validate-jwt cfg "jwt" decoded-jwt-1)))
+    (is (= {:jwt-error {:jwt {}
+                        :error :jwt_missing_field
+                        :error_description
+                        "This JWT doesn't contain the following fields #{:exp :nbf :iat}"}}
+           (sut/validate-jwt cfg "jwt" {})))
+    (is (= {:jwt-error {:jwt {:user-identifier "foo@bar.com", :iat 1487168050},
+                        :error :jwt_missing_field,
+                        :error_description
+                        "This JWT doesn't contain the following fields #{:exp :nbf}"}}
+           (sut/validate-jwt cfg "jwt" {:user-identifier "foo@bar.com" :iat 1487168050})))
+    (testing "check-fn throw an exception"
+      (is (= {:jwt-error
+              {:level :error,
+               :raw-jwt "jwt",
+               :jwt
+               {:user-identifier "foo@bar.com",
+                :sub "foo@bar.com",
+                :iss "TEST-ISSUER-1",
+                :exp 1499419023,
+                :jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
+                :nbf 1498813923,
+                :foo "bar",
+                :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
+                :iat 1498814223},
+               :error :jwt-custom-check-exception,
+               :error_description "jwt-check-fn threw an exception"}}
+             (-> (try
+                   (sut/validate-jwt
+                    (assoc cfg
+                           :jwt-check-fn
+                           (fn [_raw-jwt _jwt] (throw (ex-info "check-fn fail test" {:test-infos :test}))))
+                    "jwt"
+                    decoded-jwt-1)
+                   (catch Exception e (.getMessage e)))
+                 (update :jwt-error dissoc :exception)))))
 
-  (testing "expiration message"
-    (testing "expired time"
-      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than 1 day; we only check creation date and not maximal expiration date)"
-            tst-fn (fn [d expected]
-                     (with-redefs
-                       [sut/current-epoch! d]
+    (testing "check-fn fail by using the raw-jwt"
+      (is (= {:jwt-error
+              {:raw-jwt "jwt"
+               :jwt
+               {:user-identifier "foo@bar.com",
+                :sub "foo@bar.com",
+                :iss "TEST-ISSUER-1",
+                :exp 1499419023,
+                :jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
+                :nbf 1498813923,
+                :foo "bar",
+                :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
+                :iat 1498814223},
+               :error :jwt_custom_check_fail,
+               :error_description "jwt"}}
+             (try (sut/validate-jwt (assoc cfg :jwt-check-fn (fn [raw-jwt _jwt] [raw-jwt]))
+                                    "jwt"
+                                    decoded-jwt-1
+                                    )
+                  (catch Exception e (.getMessage e))))))
+
+    (testing "expiration message"
+      (testing "expired time"
+        (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than 1 day; we only check creation date and not maximal expiration date)"
+              tst-fn (fn [d expected]
                        (is (= (format explain-msg expected)
-                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400)
+                              (-> (sut/validate-jwt (assoc cfg :current-epoch d) "jwt" decoded-jwt-2)
                                   :jwt-error
-                                  :error_description)))))]
-        (tst-fn (const-d 2017 02 16 14 14 11) "1s")
-        (tst-fn (const-d 2017 02 16 15 14 10 0) "1h")
-        (tst-fn (const-d 2017 02 17 15 14 10 0) "1 day 1h")
-        (tst-fn (const-d 2017 02 18 15 14 10 0) "2 days 1h")
-        (tst-fn (const-d 2019 04 03 8 24 5 123) "2 years 45 days 18h 9min 55s")
-        (with-redefs
-          [sut/current-epoch! (const-d 2017 02 16 14 14 11)]
+                                  :error_description))))]
+          (tst-fn (const-d 2017 02 16 14 14 11) "1s")
+          (tst-fn (const-d 2017 02 16 15 14 10 0) "1h")
+          (tst-fn (const-d 2017 02 17 15 14 10 0) "1 day 1h")
+          (tst-fn (const-d 2017 02 18 15 14 10 0) "2 days 1h")
+          (tst-fn (const-d 2019 04 03 8 24 5 123) "2 years 45 days 18h 9min 55s")
           (is (= (format explain-msg "1s")
-                 (-> (sut/validate-jwt "jwt" decoded-jwt-2 86400 nil)
+                 (-> (sut/validate-jwt (assoc cfg :current-epoch (const-d 2017 02 16 14 14 11)) "jwt" decoded-jwt-2)
                      :jwt-error
                      :error_description))
-              "Default maximal JWT lifetime should be set to 1 day"))))
+              "Default maximal JWT lifetime should be set to 1 day")))
 
-    (testing "max lifetime"
-      (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than %s; we only check creation date and not maximal expiration date)"
-            tst-fn (fn [d max-lifetime expected expected-max]
-                     (with-redefs
-                       [sut/current-epoch! d]
+      (testing "max lifetime"
+        (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than %s; we only check creation date and not maximal expiration date)"
+              tst-fn (fn [d max-lifetime expected expected-max]
                        (is (= (format explain-msg expected expected-max)
-                              (-> (sut/validate-jwt "jwt" decoded-jwt-2 max-lifetime)
-                                  :jwt-error :error_description)))))]
-        (tst-fn (const-d 2017 02 16 14 14 11) 86400 "1s" "1 day")
-        (tst-fn (const-d 2017 02 16 14 14 11) 86300 "1min 41s" "23h 58min 20s")))))
+                              (-> (sut/validate-jwt (assoc cfg
+                                                           :jwt-max-lifetime-in-sec max-lifetime
+                                                           :current-epoch d)
+                                                    "jwt" decoded-jwt-2)
+                                  :jwt-error :error_description))))]
+          (tst-fn (const-d 2017 02 16 14 14 11) 86400 "1s" "1 day")
+          (tst-fn (const-d 2017 02 16 14 14 11) 86300 "1min 41s" "23h 58min 20s"))))))
 
 (deftest get-jwt-test
   (testing "get-jwt requests containing a JWT"
@@ -248,7 +243,9 @@
           ring-fn-1 (wrapper (fn [req] {:status 200
                                         :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
-                                        :body(:jwt req)}))
+                                        :body (:jwt req)}))
+          ring-fn-3 (wrapper (fn [req] {:status 200
+                                        :body (select-keys req [:jwt :identity :jwt-error])}))
           req-1 {:headers {"authorization"
                            (str "Bearer " jwt-token-1)}}
           req-bad-jwt {:headers {"authorization"
@@ -308,7 +305,7 @@
   (testing "Authorized No Auth Header strategy test"
     (let [wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/jwt-key-1.pub"
-                    :no-jwt-handler sut/authorize-no-jwt-header-strategy})
+                    :allow-unauthenticated? true})
           ring-fn-1 (wrapper (fn [req] {:status 200
                                         :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200
@@ -337,27 +334,20 @@
                (with-redefs [sut/current-epoch! (const-d 2017 07 1 9 17 3)]
                  (:status (ring-fn-1 req-1))))))))
   (testing "Manual No Auth Header strategy test"
-    (let [wrap-dummy-id (fn [handler]
-                          (fn [request]
-                            (-> request
-                                (assoc :identity "dummy")
-                                handler)))
-          wrapper (sut/wrap-jwt-auth-fn
+    (let [wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/jwt-key-1.pub"
-                    :no-jwt-handler wrap-dummy-id})
+                    :allow-unauthenticated? true
+                    :current-epoch (const-d 2017 06 30 11 32 10)})
           ring-fn (wrapper (fn [req] {:status 200
                                       :body (:identity req)}))
           req-no-header {}
           req-auth-header-not-jwt {:headers {"authorization"
-                                             "api-key 1234-1234-1234-1234"}}]
-      (with-redefs [sut/current-epoch! (const-d 2017 06 30 11 32 10)]
-        (let [response-no-header (ring-fn req-no-header)
-              response-auth-header-not-jwt (ring-fn req-auth-header-not-jwt)]
-          (is (= 200 (:status response-no-header)))
-          (is (= "dummy" (:body   response-no-header)))
+                                             "api-key 1234-1234-1234-1234"}}
 
-          (is (= 200 (:status response-auth-header-not-jwt)))
-          (is (= "dummy" (:body response-auth-header-not-jwt)))))))
+          response-no-header (ring-fn req-no-header)
+          response-auth-header-not-jwt (ring-fn req-auth-header-not-jwt)]
+      (is (= 200 (:status response-no-header)))
+      (is (= 200 (:status response-auth-header-not-jwt)))))
   (testing "revocation test"
     (let [always-revoke (fn [_] true)
           wrapper-always-revoke (sut/wrap-jwt-auth-fn

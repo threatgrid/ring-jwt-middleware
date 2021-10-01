@@ -14,7 +14,11 @@
   (s/conditional keyword? s/Keyword
                  :else s/Str))
 
-(s/defschema JwtClaims
+(def JWT
+  "A JWT is just a string"
+  s/Str)
+
+(s/defschema JWTClaims
   (st/merge
    (st/optional-keys
     {:exp s/Num
@@ -26,14 +30,33 @@
      :user_email s/Str})
    {KeywordOrString s/Any}))
 
+(defn describe
+  "A function adding a description meta to schema.
+  This help schema as documentation."
+  [s description]
+  (if (instance? clojure.lang.IObj s)
+    (with-meta s {:description description})
+    s))
+
 (s/defschema Config
+  "Middleware Configuration"
   (st/optional-keys
-   {:pubkey-path s/Str
-    :pubkey-fn (s/=> s/Any s/Str)
-    :is-revoked-fn (s/=> s/Any s/Bool)
-    :no-jwt-handler (s/=> (s/=> s/Any s/Any) (s/=> s/Any s/Any))
-    :post-jwt-format-fn (s/=> s/Any s/Any)
-    :jwt-check-fn (s/=> s/Str s/Any s/Bool)}))
+   {:allow-unauthenticated? (describe s/Bool
+                                      "Set this to true to allow unauthenticated requests")
+    :current-epoch (describe (s/=> s/Num)
+                             "A function returning the current time in epoch format")
+    :is-revoked-fn (describe (s/=> s/Bool JWTClaims)
+                             "A function that take a JWT and return true if it is revoked")
+    :jwt-max-lifetime-in-sec (describe s/Num
+                                       "Maximal number of second a JWT does not expires")
+    :jwt-check-fn  (describe (s/=> s/Bool JWT JWTClaims)
+                             "A function that take a JWT, claims and return a string")
+    :post-jwt-format-fn (describe (s/=> s/Any JWTClaims)
+                                  "A function taking the JWT claims and building an Identity object suitable for your needs")
+    :pubkey-fn (describe (s/=> s/Any s/Str)
+                         "A function returning a public key (takes precedence over pubkey-path)")
+    :pubkey-path (describe s/Str
+                           "The path to find the public key that will be used to check the JWT signature")}))
 
 (s/defn get-jwt :- (result-of s/Str)
   "get the JWT from a ring request"
@@ -45,7 +68,7 @@
     (->pure raw-jwt)
     (->err :no_jwt "No JWT found in HTTP headers" {})))
 
-(s/defn decode :- (result-of {:jwt JwtClaims})
+(s/defn decode :- (result-of {:jwt JWTClaims})
   "Given a JWT return an Auth hash-map"
   [token :- s/Str
    pubkey-fn :- (s/=> s/Any)]
@@ -107,21 +130,14 @@
   []
   (quot (System/currentTimeMillis) 1000))
 
-(s/defn jwt-expiry-ms :- s/Num
-  "Given a JWT creation epoch and a lifetime, calculate when it expired in seconds"
-  [jwt-created :- s/Num
-   jwt-max-lifetime-in-sec :- s/Num]
-  (- (current-epoch!)
-     (+ jwt-created
-        jwt-max-lifetime-in-sec)))
-
 (s/defn check-jwt-expiry :- (result-of s/Keyword)
   "Return a result with some error if the JWT do not respect time-related restrictions."
-  [jwt jwt-max-lifetime-in-sec :- s/Num]
+  [{:keys [jwt-max-lifetime-in-sec current-epoch]} :- Config
+   jwt :- JWTClaims]
   (let [required-fields #{:nbf :exp :iat}
         jwt-keys        (set (keys jwt))]
     (if (set/subset? required-fields jwt-keys)
-      (let [now                   (current-epoch!)
+      (let [now                   (current-epoch)
             expired-secs          (- now (+ (:iat jwt 0) jwt-max-lifetime-in-sec))
             before-secs           (- (:nbf jwt) now)
             expired-lifetime-secs (- now (:exp jwt 0))
@@ -167,11 +183,10 @@
 (s/defn validate-jwt :- (result-of s/Keyword)
   "Run both expiration and user checks,
   return a vec of errors or nothing"
-  ([raw-jwt :- s/Str
-    jwt
-    jwt-max-lifetime-in-sec :- s/Num
-    jwt-check-fn]
-   (let-either [_ (check-jwt-expiry jwt (or jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec))]
+  ([{:keys [jwt-check-fn] :as cfg} :- Config
+    raw-jwt :- s/Str
+    jwt :- JWTClaims]
+   (let-either [_ (check-jwt-expiry cfg jwt)]
      (if (fn? jwt-check-fn)
        (or (try (when-let [checks (seq (remove nil? (jwt-check-fn raw-jwt jwt)))]
                   (->err :jwt_custom_check_fail
@@ -180,16 +195,14 @@
                           :raw-jwt raw-jwt}))
                 (catch Exception e
                   (->err :jwt-custom-check-exception
-                         "jwt-check-fn thrown an exception"
+                         "jwt-check-fn threw an exception"
                          {:level :error
                           :exception e
                           :raw-jwt raw-jwt
                           :jwt jwt})))
            (->pure :custom-checks-ok))
        (->pure :no-custom-checks))))
-
-  ([raw-jwt jwt jwt-max-lifetime-in-sec]
-   (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec nil)))
+  )
 
 (defn forbid-no-jwt-header-strategy
   "Forbid all request with no Auth header"
@@ -204,7 +217,7 @@
 
 (s/defn jwt->user-id :- s/Str
   "can be used as post-jwt-format-fn"
-  [jwt :- JwtClaims]
+  [jwt :- JWTClaims]
   (:sub jwt))
 
 (s/defn jwt->oauth-ids
@@ -251,7 +264,7 @@
       :scopes #{\"scope1\" \"scope2\"}}
   "
   [prefix :- s/Str
-   jwt :- JwtClaims]
+   jwt :- JWTClaims]
   (let [n (+ 1 (count prefix))
         update-if-contains? (fn [m k f]
                               (if (contains? m k)
@@ -293,16 +306,19 @@
   - post-jwt-format-fn ; a function taking a JWT and returning a data structure representing the identity of a user
 
   "
-  [{:keys [pubkey-path
-           pubkey-fn
-           is-revoked-fn
-           jwt-check-fn
-           jwt-max-lifetime-in-sec
-           post-jwt-format-fn]
-    :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
-         is-revoked-fn no-revocation-strategy
-         post-jwt-format-fn jwt->user-id}} :- Config]
-  (let [p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
+  [raw-config :- Config]
+  (let [{:keys [pubkey-path
+                pubkey-fn
+                is-revoked-fn
+                jwt-max-lifetime-in-sec
+                post-jwt-format-fn
+                current-epoch]
+         :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
+              is-revoked-fn no-revocation-strategy
+              post-jwt-format-fn jwt->user-id
+              current-epoch current-epoch!}
+         :as config} raw-config
+        p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
                         (do (log/error "is-revoked-fn is not a function! no-revocation-strategy is used.")
@@ -312,7 +328,7 @@
         (let [authentication-result
               (let-either [raw-jwt (get-jwt request)
                            {:keys [jwt] :as  _decoded-result} (decode raw-jwt p-fn)
-                           _ (validate-jwt raw-jwt jwt jwt-max-lifetime-in-sec jwt-check-fn)
+                           _ (validate-jwt config raw-jwt jwt)
                            _ (try (if (is-revoked-fn jwt)
                                     (->err :jwt_revoked "JWT is revoked" {:jwt jwt})
                                     (->pure :ok))
@@ -326,6 +342,16 @@
                          :jwt jwt}))]
           (handler (into request (<-result authentication-result))))))))
 
+(s/defschema RingRequest
+  "we don't need to be more precise that saying this is an hash-map.
+  The RingRequest schema is used as a documentation helper."
+  {s/Any s/Any})
+
+(s/defn authenticated? :- s/Bool
+  [request :- RingRequest]
+  (and (contains? request :jwt)
+       (not (contains? request :jwt-error))))
+
 (defn mk-wrap-authorization
   "A function building a middleware taking care of the authorization logic.
 
@@ -333,24 +359,37 @@
 
   The configuration is map containing two handlers.
 
-  - no-jwt-handler => a function that will take a handler and return a new web handler.
-                      This will be used when no JWT is present.
-                      As the function takes the handler, you can still continue without blocking the access.
+  - allow-unauthenticated? => set it to true to not block the request when no JWT is provided
   - error-handler => a function taking a JWT error (see Result) and returning a ring response.
                      This function should generally just return a 401 (unauthorized)."
-  [{:keys [no-jwt-handler
+  [{:keys [allow-unauthenticated?
            error-handler]
-    :or {no-jwt-handler forbid-no-jwt-header-strategy}}]
+    :or {allow-unauthenticated? false}}]
   (let [handle-error (or error-handler default-error-handler)]
     (fn [handler]
-      (let [no-jwt-fn (no-jwt-handler handler)]
-        (fn [{{:keys [error] :as jwt-error} :jwt-error
-              :as request}]
-          (if jwt-error
-            (if (= :no_jwt error)
-              (no-jwt-fn request)
-              (handle-error jwt-error))
-            (handler request)))))))
+      (let [no-jwt-fn (if allow-unauthenticated?
+                        (authorize-no-jwt-header-strategy handler)
+                        (forbid-no-jwt-header-strategy handler))]
+        (fn [request]
+          (if (authenticated? request)
+            (handler request)
+            (let [jwt-error (:jwt-error request)]
+              (case (:error jwt-error)
+                :no_jwt (no-jwt-fn request)
+                nil (handle-error {:error :unauthenticated_user
+                                   :error_description "No authenticated user."})
+                (handle-error jwt-error)))))))))
+
+
+(def default-config
+  {:allow-unauthenticated false
+   :current-epoch current-epoch!
+   :is-revoked-fn (constantly false)
+   :jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
+   :post-jwt-format-fn ,,,
+   }
+  )
+
 
 (defn wrap-jwt-auth-fn
   "wrap a ring handler with JWT check both authentication and authorization mixed"

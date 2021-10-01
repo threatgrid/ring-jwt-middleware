@@ -12,3 +12,4 @@ pom.xml.asc
 .projectile
 .*.swp
 .clj-kondo/.cache/
+.lsp/.cache/
