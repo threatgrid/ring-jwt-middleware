@@ -15,11 +15,53 @@ currently, only RS256 is supported.
 
 ** Usage
 
+*** Quickly
 
-*** Example
+If you do not want to use a log middleware:
+
 
 #+begin_src clojure
+(defn my-handler
+  [request]
+  ,,,)
 
+(def jwt-middleware (wrap-jwt-auth-fn {:pubkey-path jwt-cert-path}))
+
+(jwt-middleware my-handler)
+#+end_src
+
+If you want to use a log middleware that will log both user identites
+derived from JWT and response statuses (and other response stats):
+
+#+begin_src clojure
+(defn my-handler
+  [request]
+  ,,,)
+
+(defn wrap-logs
+  "A middleware logging the requests"
+  [handler]
+  (fn [request]
+    (let [user-identity (:identity request)
+          response (handler request)]
+      (log/info (pr-str {:user-identity user-identity
+                         :uri (:uri request)
+                         :status (:status response)}))
+      response)))
+
+(def jwt-middleware
+  (wrap-jwt-auth-with-in-between-middleware-fn
+   {:pubkey-path jwt-cert-path}
+   wrap-logs))
+
+(jwt-middleware my-handler)
+#+end_src
+
+*** Authentication
+
+For Authentication only, and handle the authorization entirely yourself:
+
+#+begin_src clojure
 (defn my-handler
   [request]
   ,,,)
@@ -38,6 +80,7 @@ At this step the ~request~ passed to ~my-handler~ will have some of the followin
 The ~wrap-authentication~ will not take any decision about authorization access.
 This lib also provides another helper to build another middleware handling
 authorization.
+
 You can inject your own authorization rules, via:
 
 #+begin_src clojure
@@ -46,19 +89,9 @@ You can inject your own authorization rules, via:
                             :is-revoked-fn my-revocation-check-fn
                             :jwt-check-fn my-jwt-checks})
       wrap-authorization (mk-wrap-authorization
-                          {:no-jwt-handler my-middleware
-                           :error-handler my-error-handler})]
+                          {:error-handler my-error-handler})]
   (wrap-authentication (wrap-authorization my-handler)))
 #+end_src
-
-**** Notes
-
-There is a distinction between the ~:no-jwt~ error and the other one.
-The main reason being that you should return an error in the ~error-handler~
-while you could still accept un-authenticated access.
-
-If you want to log the calls you should probably add a middleware after
-authentication but before authorization.
 
 *** Options
 
@@ -97,7 +130,7 @@ Notice you could add the following keys in the configuration passed to ~mk-wrap-
                     "The check is considered successful if this function returns nil, or a sequence containing only nil values."))})))
 #+end_src
 
-By default if no JWT auth header is found the request is terminated with
+By default if no JWT authorization header is found the request is terminated with
 =unauthorized= HTTP response.
 
 By default the ~:identity~ contains the ~"sub"~ field of the JWT. But you can
@@ -111,13 +144,13 @@ Currently this middleware only supports JWT using claims registered in the IANA 
 which means you need to generate JWT using most of the claims described here: https://tools.ietf.org/html/rfc7519#section-4
 namely =jti=, =exp=, =iat=, =nbf=, =sub=:
 
-| Claim  | Description                                                        | Format |
-|--------+--------------------------------------------------------------------+--------|
-| =:exp= | Expiration time: https://tools.ietf.org/html/rfc7519#section-4.1.4 | Long   |
-| =:iat= | Issued At: https://tools.ietf.org/html/rfc7519#section-4.1.6       | Long   |
-| =:jti= | JWT ID: https://tools.ietf.org/html/rfc7519#section-4.1.7          | String |
-| =:nbf= | Not Before: https://tools.ietf.org/html/rfc7519#section-4.1.5      | Long   |
-| =:sub= | Subject: https://tools.ietf.org/html/rfc7519#section-4.1.2         | String |
+| Claim | Description                                                        | Format |
+|-------+--------------------------------------------------------------------+--------|
+| =:exp=  | Expiration time: https://tools.ietf.org/html/rfc7519#section-4.1.4 | Long   |
+| =:iat=  | Issued At: https://tools.ietf.org/html/rfc7519#section-4.1.6       | Long   |
+| =:jti=  | JWT ID: https://tools.ietf.org/html/rfc7519#section-4.1.7          | String |
+| =:nbf=  | Not Before: https://tools.ietf.org/html/rfc7519#section-4.1.5      | Long   |
+| =:sub=  | Subject: https://tools.ietf.org/html/rfc7519#section-4.1.2         | String |
 
 here is a sample token:
 

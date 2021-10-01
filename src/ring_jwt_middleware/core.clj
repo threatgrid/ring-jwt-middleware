@@ -235,3 +235,17 @@
   (let [wrap-authentication (mk-wrap-authentication conf)
         wrap-authorization (mk-wrap-authorization conf)]
     (comp wrap-authentication wrap-authorization)))
+
+(defn wrap-jwt-auth-with-in-between-middleware-fn
+  "Wrap the JWT authentication, authorization and a middleware wrapper in the middle
+
+  The wrapper will have access to both:
+  - the request with JWT details added by the authentication layer
+  - the response status returned by the authorization layer.
+
+  This is a good place to put a log middlware that will log all requests
+  "
+  [conf wrap-logs]
+  (let [wrap-authentication (mk-wrap-authentication conf)
+        wrap-authorization (mk-wrap-authorization conf)]
+    (comp wrap-authentication wrap-logs wrap-authorization)))
