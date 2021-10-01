@@ -133,9 +133,8 @@
              (select-keys [:error :error_description])))))
 
 (deftest validate-errors-test
-  (let [cfg {:jwt-max-lifetime-in-sec nil
-             :jwt-check-fn nil
-             :current-epoch fixed-current-epoch}]
+  (let [cfg (sut/->config {:current-epoch fixed-current-epoch
+                           :pubkey-path "resources/cert/jwt-key-1.pub"})]
 
     (is (result/success? (sut/validate-jwt cfg "jwt" decoded-jwt-1)))
     (is (= {:jwt-error {:jwt {}
@@ -305,7 +304,7 @@
   (testing "Authorized No Auth Header strategy test"
     (let [wrapper (sut/wrap-jwt-auth-fn
                    {:pubkey-path "resources/cert/jwt-key-1.pub"
-                    :allow-unauthenticated? true})
+                    :allow-unauthenticated-access? true})
           ring-fn-1 (wrapper (fn [req] {:status 200
                                         :body (:identity req)}))
           ring-fn-2 (wrapper (fn [req] {:status 200

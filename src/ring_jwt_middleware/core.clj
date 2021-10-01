@@ -5,58 +5,8 @@
             [clojure.string :as string]
             [clojure.tools.logging :as log]
             [ring-jwt-middleware.result :refer [->err ->pure <-result result-of let-either]]
-            [ring.util.http-response :as resp]
-            [schema.core :as s]
-            [schema-tools.core :as st]))
-
-;; Schemas
-(s/defschema KeywordOrString
-  (s/conditional keyword? s/Keyword
-                 :else s/Str))
-
-(def JWT
-  "A JWT is just a string"
-  s/Str)
-
-(s/defschema JWTClaims
-  (st/merge
-   (st/optional-keys
-    {:exp s/Num
-     :nbf s/Num
-     :iat s/Num
-     :iss s/Str
-     :sub s/Str
-     :aud (s/conditional string? s/Str :else [s/Str])
-     :user_email s/Str})
-   {KeywordOrString s/Any}))
-
-(defn describe
-  "A function adding a description meta to schema.
-  This help schema as documentation."
-  [s description]
-  (if (instance? clojure.lang.IObj s)
-    (with-meta s {:description description})
-    s))
-
-(s/defschema Config
-  "Middleware Configuration"
-  (st/optional-keys
-   {:allow-unauthenticated? (describe s/Bool
-                                      "Set this to true to allow unauthenticated requests")
-    :current-epoch (describe (s/=> s/Num)
-                             "A function returning the current time in epoch format")
-    :is-revoked-fn (describe (s/=> s/Bool JWTClaims)
-                             "A function that take a JWT and return true if it is revoked")
-    :jwt-max-lifetime-in-sec (describe s/Num
-                                       "Maximal number of second a JWT does not expires")
-    :jwt-check-fn  (describe (s/=> s/Bool JWT JWTClaims)
-                             "A function that take a JWT, claims and return a string")
-    :post-jwt-format-fn (describe (s/=> s/Any JWTClaims)
-                                  "A function taking the JWT claims and building an Identity object suitable for your needs")
-    :pubkey-fn (describe (s/=> s/Any s/Str)
-                         "A function returning a public key (takes precedence over pubkey-path)")
-    :pubkey-path (describe s/Str
-                           "The path to find the public key that will be used to check the JWT signature")}))
+            [ring-jwt-middleware.schemas :refer [Config UserConfig JWTClaims]]
+            [schema.core :as s]))
 
 (s/defn get-jwt :- (result-of s/Str)
   "get the JWT from a ring request"
@@ -125,11 +75,6 @@
          (remove nil?)
          (string/join " "))))
 
-(s/defn current-epoch! :- s/Num
-  "Returns the current time in epoch"
-  []
-  (quot (System/currentTimeMillis) 1000))
-
 (s/defn check-jwt-expiry :- (result-of s/Keyword)
   "Return a result with some error if the JWT do not respect time-related restrictions."
   [{:keys [jwt-max-lifetime-in-sec current-epoch]} :- Config
@@ -166,20 +111,6 @@
                      (pr-str (set/difference required-fields jwt-keys)))
              {:jwt jwt}))))
 
-(defn default-error-handler
-  "Return an `unauthorized` HTTP response and log the error along debug infos"
-  [{:keys [error error_description] :as error-data}]
-  (log/infof "%s: %s %s" error error_description (dissoc error-data :error :error_description :raw_jwt))
-  (resp/unauthorized (dissoc error-data :raw_jwt)))
-
-(def default-jwt-lifetime-in-sec
-  "Default JWT lifetime is 24h"
-  86400)
-
-(def no-revocation-strategy
-  "The default function used for `:is-revoked-fn` configuration"
-  (constantly false))
-
 (s/defn validate-jwt :- (result-of s/Keyword)
   "Run both expiration and user checks,
   return a vec of errors or nothing"
@@ -201,93 +132,7 @@
                           :raw-jwt raw-jwt
                           :jwt jwt})))
            (->pure :custom-checks-ok))
-       (->pure :no-custom-checks))))
-  )
-
-(defn forbid-no-jwt-header-strategy
-  "Forbid all request with no Auth header"
-  [_handler]
-  (constantly
-   (resp/unauthorized {:error :invalid_request
-                       :error_description "No Authorization Header"})))
-
-(def authorize-no-jwt-header-strategy
-  "Authorize all request even with no Auth header."
-  identity)
-
-(s/defn jwt->user-id :- s/Str
-  "can be used as post-jwt-format-fn"
-  [jwt :- JWTClaims]
-  (:sub jwt))
-
-(s/defn jwt->oauth-ids
-  "can be used as post-jwt-format-fn
-
-  This is an example function that given a JWT whose claims looks like:
-
-  - :sub
-  - \"<prefix>/scopes\"
-  - \"<prefix>/org/id\"
-  - \"<prefix>/oauth/client/id\"
-
-  It is a generic format about what an access-token should provide:
-
-  - user-id, client-id, scopes
-  - org-id
-
-  mainly transform a list of <prefix>/foo/bar/baz value into a deep nested map.
-  For example:
-
-  (sut/jwt->oauth-ids
-          \"http://example.com/claims\"
-          {:sub \"user-id\"
-           \"http://example.com/claims/scopes\" [\"scope1\" \"scope2\"]
-           \"http://example.com/claims/user/id\" \"user-id\"
-           \"http://example.com/claims/user/name\" \"John Doe\"
-           \"http://example.com/claims/user/email\" \"john.doe@dev.null\"
-           \"http://example.com/claims/user/idp/id\" \"iroh\"
-           \"http://example.com/claims/user/idp/name\" \"Visibility\"
-           \"http://example.com/claims/org/id\" \"org-id\"
-           \"http://example.com/claims/org/name\" \"ACME Inc.\"
-           \"http://example.com/claims/oauth/client/id\" \"client-id\"
-           \"http://example.com/claims/oauth/kind\" \"code\"})
-
-  => {:user {:idp {:name \"Visibility\"
-                   :id \"iroh\"},
-             :name \"John Doe\",
-             :email \"john.doe@dev.null\",
-             :id \"user-id\"}
-      :oauth {:kind \"code\"
-              :client {:id \"client-id\"}},
-      :org   {:name \"ACME Inc.\"
-              :id \"org-id\"},
-      :scopes #{\"scope1\" \"scope2\"}}
-  "
-  [prefix :- s/Str
-   jwt :- JWTClaims]
-  (let [n (+ 1 (count prefix))
-        update-if-contains? (fn [m k f]
-                              (if (contains? m k)
-                                (update m k f)
-                                m))
-        keywordize #(map keyword %)
-        str-to-path (fn [k]
-                      (-> k ;; the key of the jwt map that starts with prefix
-                          (subs n) ;; remove the prefix
-                          (string/split #"/") ;; split on /
-                          ;; finally keywordize all elements
-                          keywordize))
-        tmp (->> jwt
-                 (map (fn [[k v]]
-                        (when (and (string? k) (string/starts-with? k prefix))
-                          [(str-to-path k) v])))
-                 (remove nil?) ;; remove key not starting by prefix
-                 (reduce (fn [acc [kl v]] (assoc-in acc kl v)) {}) ;; construct the hash-map
-                 )]
-    (-> tmp
-        (assoc-in [:user :id] (:sub jwt)) ;; :sub overwrite any :user :id
-        (update-if-contains? :scopes set) ;; and scopes should be a set, not alist
-        )))
+       (->pure :no-custom-checks)))))
 
 (s/defn mk-wrap-authentication
   "A function building a middleware that will add some fields to the ring request:
@@ -306,18 +151,12 @@
   - post-jwt-format-fn ; a function taking a JWT and returning a data structure representing the identity of a user
 
   "
-  [raw-config :- Config]
+  [user-config :- UserConfig]
   (let [{:keys [pubkey-path
                 pubkey-fn
                 is-revoked-fn
-                jwt-max-lifetime-in-sec
-                post-jwt-format-fn
-                current-epoch]
-         :or {jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
-              is-revoked-fn no-revocation-strategy
-              post-jwt-format-fn jwt->user-id
-              current-epoch current-epoch!}
-         :as config} raw-config
+                post-jwt-format-fn]
+         :as config} (->config user-config)
         p-fn (or pubkey-fn (constantly (public-key pubkey-path)))
         is-revoked-fn (if (fn? is-revoked-fn)
                         is-revoked-fn
@@ -352,7 +191,7 @@
   (and (contains? request :jwt)
        (not (contains? request :jwt-error))))
 
-(defn mk-wrap-authorization
+(s/defn mk-wrap-authorization
   "A function building a middleware taking care of the authorization logic.
 
   It must be used in conjunction with `mk-wrap-authentication`.
@@ -362,10 +201,10 @@
   - allow-unauthenticated? => set it to true to not block the request when no JWT is provided
   - error-handler => a function taking a JWT error (see Result) and returning a ring response.
                      This function should generally just return a 401 (unauthorized)."
-  [{:keys [allow-unauthenticated?
-           error-handler]
-    :or {allow-unauthenticated? false}}]
-  (let [handle-error (or error-handler default-error-handler)]
+  [user-config :- UserConfig]
+  (let [{:keys [allow-unauthenticated?
+                error-handler]} (->config user-config)
+        handle-error (or error-handler default-error-handler)]
     (fn [handler]
       (let [no-jwt-fn (if allow-unauthenticated?
                         (authorize-no-jwt-header-strategy handler)
@@ -379,16 +218,6 @@
                 nil (handle-error {:error :unauthenticated_user
                                    :error_description "No authenticated user."})
                 (handle-error jwt-error)))))))))
-
-
-(def default-config
-  {:allow-unauthenticated false
-   :current-epoch current-epoch!
-   :is-revoked-fn (constantly false)
-   :jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
-   :post-jwt-format-fn ,,,
-   }
-  )
 
 
 (defn wrap-jwt-auth-fn
