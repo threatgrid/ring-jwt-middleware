@@ -148,6 +148,27 @@
                         :error_description
                         "This JWT doesn't contain the following fields #{:exp :nbf}"}}
            (sut/validate-jwt cfg "jwt" {:user-identifier "foo@bar.com" :iat 1487168050})))
+    (testing "custom check-fn"
+      (is (= {:jwt-error
+              {:jwt
+               {:user-identifier "foo@bar.com",
+                :sub "foo@bar.com",
+                :iss "TEST-ISSUER-1",
+                :exp 1499419023,
+                :jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d",
+                :nbf 1498813923,
+                :foo "bar",
+                :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c",
+                :iat 1498814223},
+               :raw-jwt "jwt",
+               :error :jwt_custom_check_fail,
+               :error_description "SOMETHING BAD HAPPENED"}}
+             (sut/validate-jwt
+              (assoc cfg
+                     :jwt-check-fn
+                     (fn [_raw-jwt _jwt] ["SOMETHING BAD HAPPENED"]))
+              "jwt"
+              decoded-jwt-1))))
     (testing "check-fn throw an exception"
       (is (= {:jwt-error
               {:level :error,
@@ -191,8 +212,7 @@
                :error_description "jwt"}}
              (try (sut/validate-jwt (assoc cfg :jwt-check-fn (fn [raw-jwt _jwt] [raw-jwt]))
                                     "jwt"
-                                    decoded-jwt-1
-                                    )
+                                    decoded-jwt-1)
                   (catch Exception e (.getMessage e))))))
 
     (testing "expiration message"
