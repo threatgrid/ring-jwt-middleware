@@ -5,10 +5,15 @@
             [ring.util.http-response :as resp]
             [schema.core :as s]))
 
+(s/defn current-millis! :- s/Num
+  "This intermediate function is useful to use with-redefs during external tests"
+  []
+  (System/currentTimeMillis))
+
 (s/defn current-epoch! :- s/Num
   "Returns the current time in epoch"
   []
-  (quot (System/currentTimeMillis) 1000))
+  (quot (current-millis!) 1000))
 
 (defn default-error-handler
   "Return an `unauthorized` HTTP response and log the error along debug infos"
