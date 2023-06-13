@@ -381,7 +381,19 @@
         (is (= 401 (:status (revoke-handler req))))
         (is (= 200 (:status (no-revoke-handler req))))
         (is (= "foo@bar.com"
-               (get-in (no-revoke-handler req) [:body :identity])))))
+               (get-in (no-revoke-handler req) [:body :identity]))))
+      (let [revoke-handler (handler-with-mid-cfg {:is-revoked-fn (constantly {:error :internal-error :error_description "Internal Error"})})
+            no-revoke-handler (handler-with-mid-cfg {:is-revoked-fn (constantly false)})]
+        (is (= 401 (:status (revoke-handler req))))
+        (is (= {:error :internal-error
+                :error_description "Internal Error"}
+               (select-keys (:body (revoke-handler req))
+                                 [:error :error_description]))
+            "is-revoked-fn can provide specific errors")
+        (is (= 200 (:status (no-revoke-handler req))))
+        (is (= "foo@bar.com"
+               (get-in (no-revoke-handler req) [:body :identity]))))
+      )
 
     (testing "post jwt transformation test"
       (let [post-transform (fn [m] {:user {:id (:sub m)}

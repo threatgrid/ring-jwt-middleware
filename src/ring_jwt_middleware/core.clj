@@ -148,7 +148,7 @@
 
   - pubkey-path ; should contain a path to the public key to be used to verify JWT signature
   - pubkey-fn ; should contain a function that once called will return the public key
-  - is-revoked-fn ; should be a function that takes a decoded jwt and return true if the jwt is revoked
+  - is-revoked-fn ; should be a function that takes a decoded jwt and return a non nil value if the jwt is revoked
   - jwt-check-fn ; should be a function taking a raw JWT string, and a decoded JWT and returns a list of errors or nil if no error is found.
   - jwt-max-lifetime-in-sec ; maximal lifetime of a JWT in seconds (takes priority over :exp)
   - post-jwt-format-fn ; a function taking a JWT and returning a data structure representing the identity of a user
@@ -167,8 +167,12 @@
               (let-either [raw-jwt (get-jwt request)
                            {:keys [jwt] :as  _decoded-result} (decode raw-jwt p-fn)
                            _ (validate-jwt config raw-jwt jwt)
-                           _ (try (if (is-revoked-fn jwt)
-                                    (->err :jwt_revoked "JWT is revoked" {:jwt jwt})
+                           _ (try (if-let [{:keys [error error_description]
+                                            :as _revoked-result} (is-revoked-fn jwt)]
+                                    (if (and (keyword? error)
+                                             (string? error_description))
+                                      (->err error error_description {:jwt jwt})
+                                      (->err :jwt_revoked "JWT is revoked" {:jwt jwt}))
                                     (->pure :ok))
                                   (catch Exception e
                                     (->err :jwt-revocation-fn-exception
