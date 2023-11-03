@@ -17,6 +17,7 @@
             :is-revoked-fn sut/no-revocation-strategy
             :jwt-max-lifetime-in-sec 86400
             :post-jwt-format-fn sut/jwt->user-id
+            :post-jwt-format-fn-arg-fn :claims
             :pubkey-path "/some/path"
             :pubkey-fn-arg-fn :claims
             :error-handler sut/default-error-handler}

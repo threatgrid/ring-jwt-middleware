@@ -57,6 +57,8 @@
                           "A function returning a public key (takes precedence over pubkey-path)")
      :pubkey-fn-arg-fn (describe (s/=> s/Any s/Any)
                                  "A function that will be applied to the argument (the raw JWT) of `pubkey-fn`")
+     :post-jwt-format-fn-arg-fn (describe (s/=> s/Any s/Any)
+                                 "A function that will be applied to the argument (the raw JWT) of `post-jwt-format-fn`")
      :pubkey-path (describe s/Str
                             "The path to find the public key that will be used to check the JWT signature")
      :jwt-check-fn

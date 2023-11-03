@@ -109,6 +109,7 @@
    :is-revoked-fn no-revocation-strategy
    :jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec
    :post-jwt-format-fn jwt->user-id
+   :post-jwt-format-fn-arg-fn :claims
    :pubkey-fn-arg-fn :claims
    :error-handler default-error-handler})
 

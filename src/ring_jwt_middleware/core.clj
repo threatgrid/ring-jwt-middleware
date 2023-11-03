@@ -161,6 +161,7 @@
                 pubkey-fn
                 is-revoked-fn
                 post-jwt-format-fn
+                post-jwt-format-fn-arg-fn
                 pubkey-fn-arg-fn]
          :as config} (->config user-config)
         p-fn (or pubkey-fn (constantly (public-key pubkey-path)))]
