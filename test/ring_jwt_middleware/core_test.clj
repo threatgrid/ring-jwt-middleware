@@ -93,15 +93,20 @@
 
 (def decoded-jwt-1
   "jwt-token-1 decoded"
-  {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
-   :exp 1499419023
-   :iat 1498814223 ;; 2017-06-30T09:17:03Z
-   :nbf 1498813923
-   :sub "foo@bar.com"
-   :iss "TEST-ISSUER-1"
-   :user-identifier "foo@bar.com"
-   :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
-   :foo "bar"})
+  {:header {:alg "RS256" :typ "JWT" :kid "kid-1"}
+   :claims
+   {:jti "r3e03ac6e-8d09-4d5e-8598-30e51a26dd2d"
+    :exp 1499419023
+    :iat 1498814223 ;; 2017-06-30T09:17:03Z
+    :nbf 1498813923
+    :sub "foo@bar.com"
+    :iss "TEST-ISSUER-1"
+    :user-identifier "foo@bar.com"
+    :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
+    :foo "bar"}})
+
+(def decoded-jwt-1-claims
+  (:claims decoded-jwt-1))
 
 (def jwt-signed-with-wrong-key
   (make-jwt
@@ -141,7 +146,7 @@
   (let [cfg (config/->config {:current-epoch fixed-current-epoch
                            :pubkey-path "resources/cert/jwt-key-1.pub"})]
 
-    (is (result/success? (sut/validate-jwt cfg "jwt" decoded-jwt-1)))
+    (is (result/success? (sut/validate-jwt cfg "jwt" decoded-jwt-1-claims)))
     (is (= {:jwt-error {:jwt {}
                         :error :jwt_missing_field
                         :error_description
@@ -172,7 +177,7 @@
                      :jwt-check-fn
                      (fn [_raw-jwt _jwt] ["SOMETHING BAD HAPPENED"]))
               "jwt"
-              decoded-jwt-1))))
+              decoded-jwt-1-claims))))
     (testing "check-fn throw an exception"
       (is (= {:jwt-error
               {:level :error,
@@ -195,7 +200,7 @@
                            :jwt-check-fn
                            (fn [_raw-jwt _jwt] (throw (ex-info "check-fn fail test" {:test-infos :test}))))
                     "jwt"
-                    decoded-jwt-1)
+                    decoded-jwt-1-claims)
                    (catch Exception e (.getMessage e)))
                  (update :jwt-error dissoc :exception)))))
 
@@ -216,7 +221,7 @@
                :error_description "jwt"}}
              (try (sut/validate-jwt (assoc cfg :jwt-check-fn (fn [raw-jwt _jwt] [raw-jwt]))
                                     "jwt"
-                                    decoded-jwt-1)
+                                    decoded-jwt-1-claims)
                   (catch Exception e (.getMessage e))))))
 
     (testing "expiration message"

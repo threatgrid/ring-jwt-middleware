@@ -21,7 +21,7 @@
     (->pure raw-jwt)
     (->err :no_jwt "No JWT found in HTTP headers" {})))
 
-(s/defn decode :- (result-of {:jwt JWTClaims})
+(s/defn decode :- (result-of {:jwt {s/Any s/Any}})
   "Given a JWT return an Auth hash-map"
   [token :- s/Str
    pubkey-fn :- (s/=> s/Any)
@@ -30,7 +30,7 @@
     (let [jwt (str->jwt token)]
       (if-let [pubkey (pubkey-fn (pubkey-fn-arg-fn jwt))]
         (if (verify jwt :RS256 pubkey)
-          (->pure {:jwt (:claims jwt)})
+          (->pure {:jwt (select-keys jwt [:header :claims])})
           (->err :jwt_invalid_signature "Invalid Signature" {:level :warn
                                                              :jwt jwt
                                                              :token token}))
@@ -168,14 +168,14 @@
       (fn [request]
         (let [authentication-result
               (let-either [raw-jwt (get-jwt request)
-                           {:keys [jwt] :as  _decoded-result} (decode raw-jwt p-fn pubkey-fn-arg-fn)
-                           _ (validate-jwt config raw-jwt jwt)
+                           {:keys [jwt]} (decode raw-jwt p-fn pubkey-fn-arg-fn)
+                           _ (validate-jwt config raw-jwt (:claims jwt))
                            _ (try (if-let [{:keys [error error_description]
-                                            :as _revoked-result} (is-revoked-fn jwt)]
+                                            :as _revoked-result} (is-revoked-fn (:claims jwt))]
                                     (if (and (keyword? error)
                                              (string? error_description))
-                                      (->err error error_description {:jwt jwt})
-                                      (->err :jwt_revoked "JWT is revoked" {:jwt jwt}))
+                                      (->err error error_description {:jwt (:claims jwt)})
+                                      (->err :jwt_revoked "JWT is revoked" {:jwt (:claims jwt)}))
                                     (->pure :ok))
                                   (catch Exception e
                                     (->err :jwt-revocation-fn-exception
@@ -183,8 +183,8 @@
                                            {:level :error
                                             :exception e
                                             :jwt jwt})))]
-                (->pure {:identity (post-jwt-format-fn jwt)
-                         :jwt jwt}))]
+                (->pure {:identity (post-jwt-format-fn (:claims jwt))
+                         :jwt (:claims jwt)}))]
           (handler (into request (<-result authentication-result))))))))
 
 (s/defschema RingRequest
