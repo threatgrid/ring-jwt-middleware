@@ -431,4 +431,16 @@
         (is (= 200 (:status (ring-fn req))))
         (is (= {:user {:id "foo@bar.com"}
                 :org {:id "bar"}}
+               (get-in (ring-fn req) [:body :identity])))))
+
+    (testing "post jwt transformation test using `post-jwt-format-fn-arg-fn`"
+      (let [post-transform (fn [m] {:user {:id (-> m :claims :sub)}
+                                    :org {:id (-> m :claims :foo)}
+                                    :jwk {:kid "kid-1"}})
+            ring-fn (handler-with-mid-cfg {:post-jwt-format-fn post-transform
+                                           :post-jwt-format-fn-arg-fn identity})]
+        (is (= 200 (:status (ring-fn req))))
+        (is (= {:user {:id "foo@bar.com"}
+                :org {:id "bar"}
+                :jwk {:kid "kid-1"}}
                (get-in (ring-fn req) [:body :identity])))))))
