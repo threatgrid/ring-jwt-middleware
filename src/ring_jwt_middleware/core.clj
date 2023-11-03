@@ -7,7 +7,7 @@
             [ring-jwt-middleware.result
              :refer
              [->err ->pure <-result let-either result-of]]
-            [ring-jwt-middleware.schemas :refer [Config JWTClaims UserConfig]]
+            [ring-jwt-middleware.schemas :refer [Config JWTClaims JWTDecoded UserConfig]]
             [ring.util.http-response :as resp]
             [schema.core :as s]))
 
@@ -21,7 +21,7 @@
     (->pure raw-jwt)
     (->err :no_jwt "No JWT found in HTTP headers" {})))
 
-(s/defn decode :- (result-of {:jwt {s/Any s/Any}})
+(s/defn decode :- (result-of {:jwt JWTDecoded})
   "Given a JWT return an Auth hash-map"
   [token :- s/Str
    pubkey-fn :- (s/=> s/Any)

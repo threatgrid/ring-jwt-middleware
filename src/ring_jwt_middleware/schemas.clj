@@ -23,6 +23,17 @@
      :user_email s/Str})
    {KeywordOrString s/Any}))
 
+(s/defschema JWTHeader
+  (st/optional-keys
+   {:alg s/Str
+    :typ s/Str
+    :kid s/Str}))
+
+(s/defschema JWTDecoded
+  (st/optional-keys
+   {:header JWTHeader
+    :claims JWTClaims}))
+
 (defn describe
   "A function adding a description meta to schema.
   The main purpose is just schema annotation for the developers."
