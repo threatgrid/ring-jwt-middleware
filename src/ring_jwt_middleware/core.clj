@@ -175,8 +175,8 @@
                                             :as _revoked-result} (is-revoked-fn (:claims jwt))]
                                     (if (and (keyword? error)
                                              (string? error_description))
-                                      (->err error error_description {:jwt (:claims jwt)})
-                                      (->err :jwt_revoked "JWT is revoked" {:jwt (:claims jwt)}))
+                                      (->err error error_description {:jwt jwt})
+                                      (->err :jwt_revoked "JWT is revoked" {:jwt jwt}))
                                     (->pure :ok))
                                   (catch Exception e
                                     (->err :jwt-revocation-fn-exception
