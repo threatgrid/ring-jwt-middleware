@@ -184,7 +184,7 @@
                                            {:level :error
                                             :exception e
                                             :jwt jwt})))]
-                (->pure {:identity (post-jwt-format-fn (:claims jwt))
+                (->pure {:identity (post-jwt-format-fn (post-jwt-format-fn-arg-fn jwt))
                          :jwt (:claims jwt)}))]
           (handler (into request (<-result authentication-result))))))))
 
