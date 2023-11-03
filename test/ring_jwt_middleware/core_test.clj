@@ -24,12 +24,12 @@
 
 (defn make-jwt
   "a useful one liner for easy testing"
-  [input-map privkey-name]
+  [input-map privkey-name kid]
   (let [privkey (clj-jwt.key/private-key
                  (str "resources/cert/" privkey-name ".key") "clojure")]
     (-> input-map
         jwt/jwt
-        (jwt/sign :RS256 privkey)
+        (jwt/sign :RS256 privkey kid)
         jwt/to-str)))
 
 (def epoch-to-time intdate->joda-time)
@@ -60,7 +60,8 @@
     :user-identifier "foo@bar.com"
     :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
     :foo "bar"}
-   "jwt-key-1"))
+   "jwt-key-1"
+   "kid-1"))
 
 (def jwt-token-2
   (make-jwt
@@ -73,7 +74,8 @@
     :user-identifier "foo@bar.com"
     :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
     :foo "bar"}
-   "jwt-key-2"))
+   "jwt-key-2"
+   "kid-2"))
 
 (def jwt-token-3
   (make-jwt
@@ -86,7 +88,8 @@
     :user-identifier "foo@bar.com"
     :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
     :foo "bar"}
-   "jwt-key-3"))
+   "jwt-key-3"
+   "kid-3"))
 
 (def decoded-jwt-1
   "jwt-token-1 decoded"
@@ -111,7 +114,8 @@
     :user-identifier "foo@bar.com"
     :user_id "f0010924-e1bc-4b03-b600-89c6cf52757c"
     :foo "bar"}
-   "jwt-key-2"))
+   "jwt-key-2"
+   "kid-2"))
 
 (def decoded-jwt-2
   {:user-identifier "bar@foo.com",
@@ -126,10 +130,10 @@
 
 (deftest decode-test
   (is (= decoded-jwt-1
-         (:jwt (result/<-result (sut/decode jwt-token-1 (constantly pubkey1))))))
-  (is (result/error? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))))
+         (:jwt (result/<-result (sut/decode jwt-token-1 (constantly pubkey1) :claims)))))
+  (is (result/error? (sut/decode jwt-signed-with-wrong-key (constantly pubkey1) :claims)))
   (is (= {:error :jwt_invalid_signature, :error_description "Invalid Signature"}
-         (-> (sut/decode jwt-signed-with-wrong-key (constantly pubkey1))
+         (-> (sut/decode jwt-signed-with-wrong-key (constantly pubkey1) :claims)
              :jwt-error
              (select-keys [:error :error_description])))))
 

@@ -24,10 +24,11 @@
 (s/defn decode :- (result-of {:jwt JWTClaims})
   "Given a JWT return an Auth hash-map"
   [token :- s/Str
-   pubkey-fn :- (s/=> s/Any)]
+   pubkey-fn :- (s/=> s/Any)
+   pubkey-fn-arg-fn :- (s/=> s/Any)]
   (try
     (let [jwt (str->jwt token)]
-      (if-let [pubkey (pubkey-fn (:claims jwt))]
+      (if-let [pubkey (pubkey-fn (pubkey-fn-arg-fn jwt))]
         (if (verify jwt :RS256 pubkey)
           (->pure {:jwt (:claims jwt)})
           (->err :jwt_invalid_signature "Invalid Signature" {:level :warn
@@ -148,6 +149,7 @@
 
   - pubkey-path ; should contain a path to the public key to be used to verify JWT signature
   - pubkey-fn ; should contain a function that once called will return the public key
+  - pubkey-fn-arg-fn ; should contain a function that will be called to modify the argument (the raw JWT) of `pubkey-fn`
   - is-revoked-fn ; should be a function that takes a decoded jwt and return a non nil value if the jwt is revoked
   - jwt-check-fn ; should be a function taking a raw JWT string, and a decoded JWT and returns a list of errors or nil if no error is found.
   - jwt-max-lifetime-in-sec ; maximal lifetime of a JWT in seconds (takes priority over :exp)
@@ -158,14 +160,15 @@
   (let [{:keys [pubkey-path
                 pubkey-fn
                 is-revoked-fn
-                post-jwt-format-fn]
+                post-jwt-format-fn
+                pubkey-fn-arg-fn]
          :as config} (->config user-config)
         p-fn (or pubkey-fn (constantly (public-key pubkey-path)))]
     (fn [handler]
       (fn [request]
         (let [authentication-result
               (let-either [raw-jwt (get-jwt request)
-                           {:keys [jwt] :as  _decoded-result} (decode raw-jwt p-fn)
+                           {:keys [jwt] :as  _decoded-result} (decode raw-jwt p-fn pubkey-fn-arg-fn)
                            _ (validate-jwt config raw-jwt jwt)
                            _ (try (if-let [{:keys [error error_description]
                                             :as _revoked-result} (is-revoked-fn jwt)]
