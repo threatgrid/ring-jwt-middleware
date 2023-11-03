@@ -343,7 +343,27 @@
         (is (= 200 (:status response-2)))
         (is (= 401 (:status response-3)))
         (is (= :jwt_decode_failed_exception
-               (get-in response-3 [:body :error])))))
+               (get-in response-3 [:body :error]))))
+
+      (testing "multiple keys based on the `kid`"
+        (let [pubkey-fn (fn [kid]
+                          (case kid
+                            "kid-1" pubkey1
+                            "kid-2" pubkey2))
+              pubkey-fn-arg-fn #(get-in % [:header :kid])
+              ring-fn (handler-with-mid-cfg {:pubkey-fn pubkey-fn
+                                             :pubkey-fn-arg-fn pubkey-fn-arg-fn})
+              req {:headers {"authorization" (str "Bearer " jwt-token-1)}}
+              req-2 {:headers {"authorization" (str "Bearer " jwt-token-2)}}
+              req-3 {:headers {"authorization" (str "Bearer " jwt-token-3)}}
+              response-1 (ring-fn req)
+              response-2 (ring-fn req-2)
+              response-3 (ring-fn req-3)]
+          (is (= 200 (:status response-1)))
+          (is (= 200 (:status response-2)))
+          (is (= 401 (:status response-3)))
+          (is (= :jwt_decode_failed_exception
+                 (get-in response-3 [:body :error]))))))
 
     (testing "Authorized No Auth Header strategy test"
       (let [ring-fn (handler-with-mid-cfg {:allow-unauthenticated-access? true})]
