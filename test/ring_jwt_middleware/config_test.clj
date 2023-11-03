@@ -18,6 +18,7 @@
             :jwt-max-lifetime-in-sec 86400
             :post-jwt-format-fn sut/jwt->user-id
             :pubkey-path "/some/path"
+            :pubkey-fn-arg-fn :claims
             :error-handler sut/default-error-handler}
            (sut/->config {:pubkey-path "/some/path"})))
 
