@@ -81,15 +81,19 @@
 
 (s/defn check-jwt-expiry :- (result-of s/Keyword)
   "Return a result with some error if the JWT do not respect time-related restrictions."
-  [{:keys [jwt-max-lifetime-in-sec current-epoch]} :- Config
+  [{:keys [jwt-max-lifetime-in-sec current-epoch default-allowed-clock-skew-in-seconds]} :- Config
    jwt :- JWTClaims]
-  (let [required-fields #{:nbf :exp :iat}
-        jwt-keys        (set (keys jwt))]
+  (let [required-fields #{:exp :iat}
+        jwt-keys        (set (keys jwt))
+        iat (:iat jwt 0)
+        exp (:exp jwt 0)
+        nbf (or (:nbf jwt)
+                (- iat default-allowed-clock-skew-in-seconds))]
     (if (set/subset? required-fields jwt-keys)
       (let [now                   (current-epoch)
-            expired-secs          (- now (+ (:iat jwt 0) jwt-max-lifetime-in-sec))
-            before-secs           (- (:nbf jwt) now)
-            expired-lifetime-secs (- now (:exp jwt 0))
+            expired-secs          (- now (+ iat jwt-max-lifetime-in-sec))
+            before-secs           (- nbf now)
+            expired-lifetime-secs (- now exp)
             err-metas             {:jwt jwt :now now}]
         (cond
           (pos? before-secs)

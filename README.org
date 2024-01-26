@@ -123,7 +123,11 @@ Notice you could add the following keys in the configuration passed to ~mk-wrap-
               "A function taking the JWT claims and building an Identity object suitable for your needs")
     :error-handler
     (describe (s/=> s/Any)
-              "A function that given a JWTError returns a ring response.")}
+              "A function that given a JWTError returns a ring response.")
+
+    :default-allowed-clock-skew-in-seconds
+    (describe s/Num
+              "When the JWT does not contain any nbf claim, the number of seconds to remove from iat claim. Default 60.")}
    (st/optional-keys
     {:pubkey-fn (describe (s/=> s/Any s/Str)
                           "A function returning a public key (takes precedence over pubkey-path)")

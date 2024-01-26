@@ -129,6 +129,12 @@
    :exp (+ 1487168050 (* 7 24 60 60))
    :nbf (- 1487168050 (* 5 24 60 60))})
 
+(def decoded-no-nbf-jwt
+  {:user-identifier "bar@foo.com",
+   :iss "TEST-ISSUER-1"
+   :iat 1487168050 ;; 2017-02-15T14:14:10Z
+   :exp (+ 1487168050 (* 7 24 60 60))})
+
 (def pubkey1 (public-key "resources/cert/jwt-key-1.pub"))
 (def pubkey2 (public-key "resources/cert/jwt-key-2.pub"))
 (def pubkey3 (public-key "resources/cert/jwt-key-3.pub"))
@@ -150,12 +156,12 @@
     (is (= {:jwt-error {:jwt {}
                         :error :jwt_missing_field
                         :error_description
-                        "This JWT doesn't contain the following fields #{:exp :nbf :iat}"}}
+                        "This JWT doesn't contain the following fields #{:exp :iat}"}}
            (sut/validate-jwt cfg "jwt" {})))
     (is (= {:jwt-error {:jwt {:user-identifier "foo@bar.com", :iat 1487168050},
                         :error :jwt_missing_field,
                         :error_description
-                        "This JWT doesn't contain the following fields #{:exp :nbf}"}}
+                        "This JWT doesn't contain the following fields #{:exp}"}}
            (sut/validate-jwt cfg "jwt" {:user-identifier "foo@bar.com" :iat 1487168050})))
     (testing "custom check-fn"
       (is (= {:jwt-error
@@ -242,6 +248,58 @@
                      :jwt-error
                      :error_description))
               "Default maximal JWT lifetime should be set to 1 day")))
+      (testing "expired time for missing nbf JWT"
+        (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than 1 day; we only check creation date and not maximal expiration date)"
+              tst-fn (fn [d expected]
+                       (is (= (format explain-msg expected)
+                              (-> (sut/validate-jwt (assoc cfg :current-epoch d) "jwt" decoded-no-nbf-jwt)
+                                  :jwt-error
+                                  :error_description))))]
+          (tst-fn (const-d 2017 02 16 14 14 11) "1s")
+          (tst-fn (const-d 2017 02 16 15 14 10 0) "1h")
+          (tst-fn (const-d 2017 02 17 15 14 10 0) "1 day 1h")
+          (tst-fn (const-d 2017 02 18 15 14 10 0) "2 days 1h")
+          (tst-fn (const-d 2019 04 03 8 24 5 123) "2 years 45 days 18h 9min 55s")
+          (is (= (format explain-msg "1s")
+                 (-> (sut/validate-jwt (assoc cfg :current-epoch (const-d 2017 02 16 14 14 11)) "jwt" decoded-no-nbf-jwt)
+                     :jwt-error
+                     :error_description))
+              "Default maximal JWT lifetime should be set to 1 day")))
+
+      (testing "nbf message"
+        (testing "with nbf"
+          (let [explain-msg "This JWT will be valid in %s"
+                tst-fn (fn [d expected]
+                         (is (= (format explain-msg expected)
+                                (-> (sut/validate-jwt (assoc cfg :current-epoch d) "jwt" decoded-jwt-2)
+                                    :jwt-error
+                                    :error_description))))]
+            ;; 5 days and 1s before :iat
+            (tst-fn (const-d 2017 02 10 14 14 9) "1s")
+            (tst-fn (const-d 2017 02 10 13 14 9) "1h 1s")))
+        (testing "missing nbf"
+          (testing "default clock skew"
+            (let [explain-msg "This JWT will be valid in %s"
+                  tst-fn (fn [d expected]
+                           (is (= (format explain-msg expected)
+                                  (-> (sut/validate-jwt (assoc cfg :current-epoch d) "jwt" decoded-no-nbf-jwt)
+                                      :jwt-error
+                                      :error_description))))]
+              ;; 1 minute before :iat
+              (tst-fn (const-d 2017 02 15 14 13 9) "1s")
+              (tst-fn (const-d 2017 02 15 14 12 9) "1min 1s")))
+          (testing "overriden clock skew (set to 0)"
+            (let [explain-msg "This JWT will be valid in %s"
+                  tst-fn (fn [d expected]
+                           (is (= (format explain-msg expected)
+                                  (-> (sut/validate-jwt (assoc cfg :current-epoch d
+                                                               :default-allowed-clock-skew-in-seconds 0)
+                                                        "jwt" decoded-no-nbf-jwt)
+                                      :jwt-error
+                                      :error_description))))]
+              ;; 1 minute before :iat
+              (tst-fn (const-d 2017 02 15 14 13 9) "1min 1s")
+              (tst-fn (const-d 2017 02 15 14 12 9) "2min 1s")))))
 
       (testing "max lifetime"
         (let [explain-msg "This JWT has expired %s ago (we don't allow JWT older than %s; we only check creation date and not maximal expiration date)"
