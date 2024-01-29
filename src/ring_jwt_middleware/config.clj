@@ -105,6 +105,7 @@
 
 (def default-config
   {:allow-unauthenticated-access? false
+   :default-allowed-clock-skew-in-seconds 60
    :current-epoch current-epoch!
    :is-revoked-fn no-revocation-strategy
    :jwt-max-lifetime-in-sec default-jwt-lifetime-in-sec

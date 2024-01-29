@@ -13,6 +13,7 @@
              (catch AssertionError e (.getMessage e)))))
 
   (t/is (= {:allow-unauthenticated-access? false
+            :default-allowed-clock-skew-in-seconds 60,
             :current-epoch sut/current-epoch!
             :is-revoked-fn sut/no-revocation-strategy
             :jwt-max-lifetime-in-sec 86400
