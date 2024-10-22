@@ -7,7 +7,7 @@
   :url "http://github.com/threatgrid/ring-jwt-middleware"
   :deploy-repositories [["releases" {:url "https://clojars.org/repo" :creds :gpg}]
                         ["snapshots" {:url "https://clojars.org/repo" :creds :gpg}]]
-  :dependencies [[org.clojure/clojure "1.10.1"]
+  :dependencies [[org.clojure/clojure "1.10.3"]
                  [threatgrid/clj-jwt "0.3.1"]
                  [org.clojure/tools.logging "1.0.0"]
                  [metosin/ring-http-response "0.9.1"]
