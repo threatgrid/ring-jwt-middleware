@@ -42,8 +42,7 @@
     (with-meta s {:description description})
     s))
 
-(s/defschema Config
-  "Initialized internal Configuration"
+(s/defschema Config*
   (st/merge
    {:allow-unauthenticated-access?
     (describe s/Bool
@@ -57,23 +56,25 @@
     :jwt-max-lifetime-in-sec
     (describe s/Num
               "Maximal number of second a JWT does not expires")
-    :post-jwt-format-fn
-    (describe (s/=> s/Any JWTClaims)
-              "A function taking the JWT claims and building an Identity object suitable for your needs")
     :error-handler
     (describe (s/=> s/Any)
               "A function that given a JWTError returns a ring response.")
-
     :default-allowed-clock-skew-in-seconds
     (describe s/Num
               "When the JWT does not contain any nbf claim, the number of seconds to remove from iat claim. Default 60.")}
    (st/optional-keys
-    {:pubkey-fn (describe (s/=> s/Any s/Str)
+    {:post-jwt-format-fn
+     (describe (s/=> s/Any JWTClaims)
+               "A function taking the JWT claims and building an Identity object suitable for your needs")
+     :post-jwt-format-with-request-fn
+     (describe (s/=> s/Any JWTClaims)
+               "A function taking the JWT claims and the request, and building an Identity object suitable for your needs")
+     :pubkey-fn (describe (s/=> s/Any s/Str)
                           "A function returning a public key (takes precedence over pubkey-path)")
      :pubkey-fn-arg-fn (describe (s/=> s/Any s/Any)
                                  "A function that will be applied to the argument (the raw JWT) of `pubkey-fn`")
      :post-jwt-format-fn-arg-fn (describe (s/=> s/Any s/Any)
-                                 "A function that will be applied to the argument (the raw JWT) of `post-jwt-format-fn`")
+                                          "A function that will be applied to the argument (the raw JWT) of `post-jwt-format-fn` or `post-jwt-format-with-request-fn`")
      :pubkey-path (describe s/Str
                             "The path to find the public key that will be used to check the JWT signature")
      :jwt-check-fn
@@ -81,7 +82,15 @@
                (str "A function that take a JWT, claims and return a sequence of string containing errors."
                     "The check is considered successful if this function returns nil, or a sequence containing only nil values."))})))
 
+(s/defschema Config
+  "Initialized internal Configuration"
+  (s/constrained
+   Config*
+   (fn [{:keys [post-jwt-format-fn post-jwt-format-with-request-fn]}]
+     (or post-jwt-format-fn
+         post-jwt-format-with-request-fn))
+   "One of `post-jwt-format-fn` or `post-jwt-format-with-request-fn` is required. `post-jwt-format-with-request-fn` has precedence."))
 
 (s/defschema UserConfig
   "Middleware Configuration"
-  (st/optional-keys Config))
+  (st/optional-keys Config*))

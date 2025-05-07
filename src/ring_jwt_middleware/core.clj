@@ -165,6 +165,7 @@
                 pubkey-fn
                 is-revoked-fn
                 post-jwt-format-fn
+                post-jwt-format-with-request-fn
                 post-jwt-format-fn-arg-fn
                 pubkey-fn-arg-fn]
          :as config} (->config user-config)
@@ -188,7 +189,9 @@
                                            {:level :error
                                             :exception e
                                             :jwt jwt})))]
-                (->pure {:identity (post-jwt-format-fn (post-jwt-format-fn-arg-fn jwt))
+                (->pure {:identity (if post-jwt-format-with-request-fn
+                                     (post-jwt-format-with-request-fn (post-jwt-format-fn-arg-fn jwt) request)
+                                     (post-jwt-format-fn (post-jwt-format-fn-arg-fn jwt)))
                          :jwt (:claims jwt)}))]
           (handler (into request (<-result authentication-result))))))))
 
