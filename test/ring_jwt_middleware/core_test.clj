@@ -46,7 +46,6 @@
   [& args]
   (constantly (to-epoch (apply jt/local-date-time args))))
 
-
 (jt/available-zone-ids)
 
 (def jwt-token-1
@@ -150,7 +149,7 @@
 
 (deftest validate-errors-test
   (let [cfg (config/->config {:current-epoch fixed-current-epoch
-                           :pubkey-path "resources/cert/jwt-key-1.pub"})]
+                              :pubkey-path "resources/cert/jwt-key-1.pub"})]
 
     (is (result/success? (sut/validate-jwt cfg "jwt" decoded-jwt-1-claims)))
     (is (= {:jwt-error {:jwt {}
@@ -389,7 +388,6 @@
         (is (= 200
                (:status (ring-fn req))))))
 
-
     (testing "multiple keys support"
       (let [pubkey-fn (fn [claims]
                         (case (:iss claims)
@@ -461,7 +459,6 @@
                  {:error :no_jwt, :error_description "No JWT found in HTTP headers"}}}
                (ring-fn req-auth-header-not-jwt)))))
 
-
     (testing "revocation test"
       (let [revoke-handler (handler-with-mid-cfg {:is-revoked-fn (constantly true)})
             no-revoke-handler (handler-with-mid-cfg {:is-revoked-fn (constantly false)})]
@@ -475,12 +472,11 @@
         (is (= {:error :internal-error
                 :error_description "Internal Error"}
                (select-keys (:body (revoke-handler req))
-                                 [:error :error_description]))
+                            [:error :error_description]))
             "is-revoked-fn can provide specific errors")
         (is (= 200 (:status (no-revoke-handler req))))
         (is (= "foo@bar.com"
-               (get-in (no-revoke-handler req) [:body :identity]))))
-      )
+               (get-in (no-revoke-handler req) [:body :identity])))))
 
     (testing "post jwt transformation test"
       (let [post-transform (fn [m] {:user {:id (:sub m)}
@@ -489,6 +485,20 @@
         (is (= 200 (:status (ring-fn req))))
         (is (= {:user {:id "foo@bar.com"}
                 :org {:id "bar"}}
+               (get-in (ring-fn req) [:body :identity])))))
+
+    (testing "post-jwt-format-with-request-fn takes precedence over post-jwt-format-fn"
+      (let [post-transform (fn [m] {:user {:id (:sub m)}
+                                    :org {:id (:foo m)}})
+            post-transform-with-request (fn [m _req] {:user {:id (:sub m)}
+                                                      :org {:id (:foo m)}
+                                                      :headers-available? true})
+            ring-fn (handler-with-mid-cfg {:post-jwt-format-fn post-transform
+                                           :post-jwt-format-with-request-fn post-transform-with-request})]
+        (is (= 200 (:status (ring-fn req))))
+        (is (= {:user {:id "foo@bar.com"}
+                :org {:id "bar"}
+                :headers-available? true}
                (get-in (ring-fn req) [:body :identity])))))
 
     (testing "post jwt transformation test using `post-jwt-format-fn-arg-fn`"
